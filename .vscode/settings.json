@@ -1,0 +1,9 @@
+{
+  "python.defaultInterpreterPath": "H:\\João\\Logos\\Sistema Logistica v2\\.venv\\Scripts\\python.exe",
+  "python.terminal.activateEnvironment": true,
+
+  // Ajuda o Pylance a localizar pacotes dentro do venv (workaround para caminhos com acento)
+  "python.analysis.extraPaths": [
+    "H:\\João\\Logos\\Sistema Logistica v2\\.venv\\Lib\\site-packages"
+  ]
+}
