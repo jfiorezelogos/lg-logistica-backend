@@ -1,0 +1,28 @@
+repos:
+  - repo: https://github.com/psf/black
+    rev: 24.8.0
+    hooks:
+      - id: black
+        exclude: '(?:^|/)(backend|frontend)\.py$'
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.2
+    hooks:
+      - id: ruff
+        args: [--fix]
+        exclude: '(?:^|/)(backend|frontend)\.py$'
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.10.0   # pode subir para v1.11.2 se quiser
+    hooks:
+      - id: mypy
+        args: []  # sem --pretty
+        additional_dependencies:
+          - pydantic>=2
+          - pydantic-settings>=2
+          - python-json-logger>=2.0.7
+          - types-requests
+          - types-python-dateutil
+          - pandas-stubs
+          - types-colorama
+        exclude: '(?:^|/)(main|backend|frontend)\.py$'   # pula main, backend e frontend

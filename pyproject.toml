@@ -1,0 +1,60 @@
+[tool.black]
+line-length = 120
+target-version = ["py313"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+
+[tool.ruff.lint]
+# Regras ativas (equilíbrio entre signal/ruído)
+select = [
+  "E",     # pycodestyle
+  "F",     # pyflakes (erros comuns)
+  "I",     # isort (organização de imports)
+  "B",     # bugbear (boas práticas/bugs comuns)
+  "UP",    # pyupgrade (modernizações)
+  "ARG",   # argumentos não usados (detecção mais fina)
+  "RUF",   # regras extras do Ruff
+  "C4",    # comprehensions (otimizações/sinais)
+  "DTZ",   # datetime timezone-aware
+  "PLR",   # pylint - regras de complexidade
+  "PLW",   # pylint - warnings
+  "E722",  # except cru
+  "E731",  # lambda atribuído a variável
+  "E741",  # variáveis com nomes confusos
+  "RUF013" # Optional implícito
+]
+# Black decide a quebra de linha; ignoramos E501
+ignore = ["E203", "E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"main.py" = [
+  "PLR" # refatorações de complexidade (por ora)
+]
+"backend.py" = [
+  "PLR" # idem
+]
+"frontend.py" = [
+  "PLR" # idem
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app", "src", "common"]
+combine-as-imports = true
+
+[tool.mypy]
+python_version = "3.13"
+ignore_missing_imports = false
+follow_imports = "silent"
+namespace_packages = true
+explicit_package_bases = true
+disallow_untyped_defs = true
+warn_return_any = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = ["backend", "frontend"]
+disallow_untyped_defs = false
+warn_return_any = false
+ignore_missing_imports = true
