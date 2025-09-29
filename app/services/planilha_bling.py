@@ -5,7 +5,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, TypedDict, cast
 
 import pandas as pd
-from assinaturas import AplicarRegrasAssinaturas, aplicar_regras_assinaturas, validar_regras_assinatura
+from app.services.coleta_vendas_assinaturas import AplicarRegrasAssinaturas, aplicar_regras_assinaturas, validar_regras_assinatura
 from dateutil.parser import parse as parse_date
 from mapeamento import SKUInfo, SKUs, produto_indisponivel
 

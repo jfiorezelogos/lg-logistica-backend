@@ -1,5 +1,9 @@
+from __future__ import annotations
+
+import json
+import os
 from collections.abc import Mapping, Sequence
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
 
 import unidecode
 
@@ -9,11 +13,12 @@ class SKUInfo(TypedDict, total=False):
     peso: float | int
     periodicidade: str
     guru_ids: Sequence[str]
+    tipo: str
+    indisponivel: bool
 
 
-SKUInfo = Mapping[str, Any]
-
-SKUs = Mapping[str, SKUInfo]
+SKUInfoMapping = Mapping[str, Any]
+SKUs = Mapping[str, SKUInfoMapping]
 
 
 def produto_indisponivel(
@@ -30,9 +35,9 @@ def produto_indisponivel(
 
     # fallback por normalização do nome
     if info is None and produto_nome:
-        alvo = unidecode(str(produto_nome)).lower().strip()
+        alvo = unidecode.unidecode(str(produto_nome)).lower().strip()
         for nome, i in skus.items():
-            if unidecode(nome).lower().strip() == alvo:
+            if unidecode.unidecode(nome).lower().strip() == alvo:
                 info = i
                 break
 
@@ -45,3 +50,25 @@ def produto_indisponivel(
                 break
 
     return bool(info and info.get("indisponivel", False))
+
+
+# 🔹 helper centralizado para carregar o skus.json
+def load_skus_info(path: str | None = None) -> SKUs:
+    """
+    Carrega o dicionário de SKUs a partir de `skus.json`.
+    Se não existir, cria com alguns exemplos mínimos.
+    """
+    if path is None:
+        path = os.path.join(os.path.dirname(__file__), "..", "skus.json")
+
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            return cast(SKUs, json.load(f))
+
+    # fallback se ainda não existir
+    skus_info: dict[str, Any] = {
+        "Exemplo Produto": {"sku": "X001", "peso": 1.0, "tipo": "produto", "guru_ids": []},
+    }
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(skus_info, f, indent=4, ensure_ascii=False)
+    return skus_info

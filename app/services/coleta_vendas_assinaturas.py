@@ -14,6 +14,7 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, Protocol, TypedDict, cast
+from services.datetime_utils import UTC, _to_dt
 
 from dateutil.parser import parse as parse_date
 from mapeamento import produto_indisponivel
@@ -42,8 +43,6 @@ class HasIsSet(Protocol):
 
 
 # ============== CONSTANTES GERAIS ==============
-UTC = dt.UTC
-
 
 def calcular_periodo_assinatura(ano: int, mes: int, periodicidade: str) -> tuple[dt.datetime, dt.datetime, int]:
     periodicidade = (periodicidade or "").strip().lower()
@@ -457,42 +456,6 @@ def validar_regras_assinatura(dados: dict, data_pedido: dt.datetime) -> bool:
     - Converte TUDO para dt.datetime *aware* (UTC) antes de comparar.
     - Logs defensivos sem referenciar variáveis ainda não definidas.
     """
-
-    def _aware_utc(dt: dt.datetime | None) -> dt.datetime | None:
-        if dt is None:
-            return None
-        # Se vier naive, marca como UTC; se vier com tz, converte para UTC
-        return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt.astimezone(UTC)
-
-    def _to_dt(val: object) -> dt.datetime | None:
-        """Converte val -> dt.datetime (UTC aware).
-
-        Aceita dt.datetime/ISO/timestamp s|ms/QDateTime.
-        """
-        if val is None:
-            return None
-        if isinstance(val, dt.datetime):
-            return _aware_utc(val)
-        if isinstance(val, int | float):
-            try:
-                v = float(val)
-                if v > 1e12:  # ms -> s
-                    v /= 1000.0
-                return dt.datetime.fromtimestamp(v, tz=UTC)
-            except Exception:
-                return None
-        if isinstance(val, str):
-            try:
-                dtp = parse_date(val)  # mantém a função existente
-                return _aware_utc(dtp)
-            except Exception:
-                return None
-        if hasattr(val, "toPyDateTime"):
-            try:
-                return _aware_utc(val.toPyDateTime())
-            except Exception:
-                return None
-        return None
 
     try:
         if not isinstance(dados, dict):

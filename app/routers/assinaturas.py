@@ -6,7 +6,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from app.services.assinaturas import (
+from app.services.coleta_vendas_assinaturas import (
     gerenciar_coleta_vendas_assinaturas,
     montar_payload_busca_assinaturas,
     montar_planilha_vendas_guru,
