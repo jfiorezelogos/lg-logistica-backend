@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.services.guru_vendas_assinaturas import montar_payload_busca_assinaturas
 from app.services.guru_worker_coleta import executar_worker_guru
@@ -15,12 +15,19 @@ from app.services.loader_regras_assinaturas import (
     normalizar_rules,
 )
 
-router = APIRouter(prefix="/guru/vendas", tags=["Assinaturas"])
+router = APIRouter(prefix="/guru/vendas", tags=["Coleta"])
 
 # --- caminhos (ajuste se necessário) ---
 BASE_DIR = Path(__file__).resolve().parents[2]
 SKUS_PATH = BASE_DIR / "skus.json"
 CFG_PATH = BASE_DIR / "config_ofertas.json"
+
+
+class ColetaPage(BaseModel):
+    items: list[dict[str, Any]] = Field(..., description="Linhas desta página")
+    next_cursor: str | None = Field(None, description="Cursor para próxima página (se houver)")
+    total: int = Field(..., description="Total de linhas da consulta (não paginado)")
+    contagem: dict[str, dict[str, int]] = Field(..., description="Resumo/contagens")
 
 
 class ColetaOut(BaseModel):  # mantém o schema de saída

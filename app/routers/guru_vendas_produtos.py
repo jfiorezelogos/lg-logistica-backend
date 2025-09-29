@@ -10,7 +10,7 @@ from app.services.guru_vendas_produtos import iniciar_coleta_vendas_produtos
 from app.services.guru_worker_coleta import executar_worker_guru
 from app.services.loader_produtos_info import load_skus_info
 
-router = APIRouter(prefix="/guru/vendas", tags=["Produtos"])
+router = APIRouter(prefix="/guru/vendas", tags=["Coleta"])
 
 
 class ColetaOut(BaseModel):

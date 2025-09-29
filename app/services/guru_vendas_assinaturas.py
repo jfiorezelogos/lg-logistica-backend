@@ -33,9 +33,6 @@ from app.utils.datetime_helpers import (
     bimestre_do_mes,
 )
 
-# (opcional) correlação p/ logs — importado, mas ainda não usado aqui
-from app.utils.logging import get_correlation_id, set_correlation_id  # noqa: F401
-
 
 # ============== TIPAGEM AUXILIAR ==============
 class HasIsSet(Protocol):

@@ -12,7 +12,7 @@ from app.schemas.guru_regras import ConfigOfertas, Regra
 # service de regras (backend puro)
 from app.services import guru_regras as regras
 
-router = APIRouter(prefix="/guru/regras", tags=["Regras"])
+router = APIRouter(prefix="/guru/regras", tags=["Regras de Cupons/Ofertas"])
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 CFG_PATH = BASE_DIR / "config_ofertas.json"
