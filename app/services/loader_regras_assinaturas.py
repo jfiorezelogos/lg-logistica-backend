@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 from typing import Any
 
 
@@ -69,4 +70,4 @@ def montar_mapas_cupons(cfg: dict[str, Any]) -> tuple[dict[str, str], dict[str, 
     return cupons_cdf, cupons_bi_mens
 
 
-__all__ = ["normalizar_rules", "montar_ofertas_embutidas", "montar_mapas_cupons"]
+__all__ = ["montar_mapas_cupons", "montar_ofertas_embutidas", "normalizar_rules"]

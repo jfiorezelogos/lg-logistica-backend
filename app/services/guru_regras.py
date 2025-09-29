@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping, MutableMapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, MutableMapping, Sequence, cast
+from typing import Any, cast
 from uuid import uuid4
 
 import requests
@@ -11,8 +12,8 @@ import requests
 # Reúso do cliente/constantes do Guru (sem UI)
 from app.services.guru_client import BASE_URL_GURU, HEADERS_GURU
 
-
 # ======================== I/O de regras (arquivo) ========================
+
 
 def carregar_regras(config_path: str | Path) -> list[dict[str, Any]]:
     """
@@ -58,6 +59,7 @@ def salvar_regras(config_path: str | Path, rules: Sequence[Mapping[str, Any]]) -
 
 # ======================== Coleta de produtos (Guru) ========================
 
+
 def coletar_produtos_guru(*, limit: int = 100, timeout: float = 10.0) -> list[dict[str, Any]]:
     """
     Busca TODOS os produtos do Guru em páginas (cursor) e retorna list[dict].
@@ -95,6 +97,7 @@ def coletar_produtos_guru(*, limit: int = 100, timeout: float = 10.0) -> list[di
 
 # ======================== Backend do “iniciar_gerenciador_regras” ========================
 
+
 def iniciar_gerenciador_regras_backend(
     *,
     estado: MutableMapping[str, Any] | None = None,
@@ -124,6 +127,7 @@ def iniciar_gerenciador_regras_backend(
 
 
 # ======================== Operações sobre regras (sem UI) ========================
+
 
 def gerar_uuid() -> str:
     return str(uuid4())

@@ -4,8 +4,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, cast
 
-from app.services.planilha_bling import montar_planilha_vendas_guru
-
+from app.services.bling_planilha import montar_planilha_vendas_guru
 
 
 def executar_worker_guru(
@@ -49,13 +48,15 @@ def executar_worker_guru(
         # --- Busca transações (backend puro) ---
         if modo == "assinaturas":
             # ✅ passa skus_info exigido pela função
-            from app.services.coleta_vendas_assinaturas import gerenciar_coleta_vendas_assinaturas
+            from app.services.guru_vendas_assinaturas import gerenciar_coleta_vendas_assinaturas
+
             transacoes, _, dados_final_map = gerenciar_coleta_vendas_assinaturas(
                 cast(dict[str, Any], dict(dados)),
                 skus_info=skus_info,
             )
         elif modo == "produtos":
-            from app.services.coleta_vendas_produtos import coletar_vendas_produtos
+            from app.services.guru_vendas_produtos import coletar_vendas_produtos
+
             transacoes, _, dados_final_map = coletar_vendas_produtos(  # ajuste se sua assinatura exigir skus_info
                 cast(dict[str, Any], dict(dados))
             )

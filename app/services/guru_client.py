@@ -14,7 +14,6 @@ from requests import Response, Session
 
 from app.common.settings import settings  # ajuste se seu settings mora aqui
 
-
 # helper de data (apenas a função de conversão; o resto fica onde já está)
 from app.utils.datetime_helpers import _as_dt
 
@@ -33,6 +32,7 @@ LIMITE_INFERIOR = dt.datetime(2024, 10, 1, tzinfo=UTC)
 
 # ===================== Exceptions =====================
 
+
 class TransientGuruError(Exception):
     """Erro transitório ao buscar a PRIMEIRA página; recomenda retry externo."""
 
@@ -44,6 +44,7 @@ class TransientPageError(Exception):
 
 
 # ===================== Períodos =====================
+
 
 def dividir_periodos_coleta_api_guru(
     data_inicio: str | dt.date | dt.datetime,
@@ -83,6 +84,7 @@ def dividir_periodos_coleta_api_guru(
 
 # ===================== HTTP (Guru) =====================
 
+
 class _RateLimiter:
     def __init__(self, qps: float, burst: int | None = None) -> None:
         self.qps = max(0.1, float(qps))
@@ -107,7 +109,9 @@ class _RateLimiter:
             sleep_s = max(self.min_interval, (1.0 - self._tokens) / self.qps)
         time.sleep(sleep_s)
 
+
 _GURU_RL = _RateLimiter(qps=getattr(settings, "GURU_QPS", 3.0))
+
 
 def _fetch_page_with_retry(
     session: Session,
@@ -155,7 +159,9 @@ def _fetch_page_with_retry(
             last_exc = e
             if tentativa < max_page_retries:
                 espera = (1.5**tentativa) + random.random()
-                print(f"[⏳ retry {tentativa+1}/{max_page_retries}] pid={product_id} err={e} | aguardando {espera:.1f}s")
+                print(
+                    f"[⏳ retry {tentativa+1}/{max_page_retries}] pid={product_id} err={e} | aguardando {espera:.1f}s"
+                )
                 time.sleep(espera)
             else:
                 raise TransientPageError(e)
@@ -165,7 +171,8 @@ def _fetch_page_with_retry(
                 _GURU_CONC_SEM.release()
             except Exception:
                 pass
-            
+
+
 def coletar_vendas(
     product_id: str,
     inicio: str,
@@ -230,7 +237,9 @@ def coletar_vendas(
             break
 
     status = "Concluído" if not erro_final else "Concluído (parcial)"
-    print(f"[✅ coletar_vendas] {status} - Produto {product_id} | Total: {total_transacoes} transações em {pagina_count} página(s)")
+    print(
+        f"[✅ coletar_vendas] {status} - Produto {product_id} | Total: {total_transacoes} transações em {pagina_count} página(s)"
+    )
     return resultado
 
 
@@ -255,13 +264,13 @@ def coletar_vendas_com_retry(
 
 
 __all__ = [
-    "UTC",
     "BASE_URL_GURU",
     "HEADERS_GURU",
     "LIMITE_INFERIOR",
+    "UTC",
     "TransientGuruError",
     "TransientPageError",
-    "dividir_periodos_coleta_api_guru",
     "coletar_vendas",
     "coletar_vendas_com_retry",
+    "dividir_periodos_coleta_api_guru",
 ]

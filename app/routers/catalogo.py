@@ -5,20 +5,21 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from app.schemas.skus_service import AssinaturaIn, ComboIn, ProdutoIn, SKUsPayload
 from app.services.skus_service import (
-    carregar_skus, salvar_skus, gerar_chave_assinatura,
+    carregar_skus,
+    gerar_chave_assinatura,
+    salvar_skus,
 )
-from app.schemas.skus_service import ProdutoIn, AssinaturaIn, ComboIn, SKUsPayload
 
 router = APIRouter(prefix="/catalogo/skus", tags=["Catálogo / SKUs"])
 
 
 # ======== Endpoints básicos ========
 
+
 @router.get(
-    "/",
-    summary="Listar SKUs (arquivo completo)",
-    description="Retorna o conteúdo do `skus.json` como dict nome→info."
+    "/", summary="Listar SKUs (arquivo completo)", description="Retorna o conteúdo do `skus.json` como dict nome→info."
 )
 def listar_skus() -> dict[str, dict[str, Any]]:
     try:
@@ -43,10 +44,11 @@ def substituir_skus(body: SKUsPayload) -> dict[str, dict[str, Any]]:
 
 # ======== Upserts ========
 
+
 @router.post(
     "/produto",
     summary="Upsert de produto simples",
-    description="Cria ou atualiza um **produto** (tipo='produto'). A chave é o `nome`."
+    description="Cria ou atualiza um **produto** (tipo='produto'). A chave é o `nome`.",
 )
 def upsert_produto(prod: ProdutoIn) -> dict[str, dict[str, Any]]:
     try:
@@ -71,7 +73,7 @@ def upsert_produto(prod: ProdutoIn) -> dict[str, dict[str, Any]]:
 @router.post(
     "/assinatura",
     summary="Upsert de assinatura",
-    description="Cria ou atualiza uma **assinatura** (tipo='assinatura'). A chave é `nome_base - periodicidade`."
+    description="Cria ou atualiza uma **assinatura** (tipo='assinatura'). A chave é `nome_base - periodicidade`.",
 )
 def upsert_assinatura(assin: AssinaturaIn) -> dict[str, dict[str, Any]]:
     try:
@@ -97,9 +99,7 @@ def upsert_assinatura(assin: AssinaturaIn) -> dict[str, dict[str, Any]]:
 
 
 @router.post(
-    "/combo",
-    summary="Upsert de combo",
-    description="Cria ou atualiza um **combo** (tipo='combo'). A chave é o `nome`."
+    "/combo", summary="Upsert de combo", description="Cria ou atualiza um **combo** (tipo='combo'). A chave é o `nome`."
 )
 def upsert_combo(combo: ComboIn) -> dict[str, dict[str, Any]]:
     try:
@@ -123,6 +123,7 @@ def upsert_combo(combo: ComboIn) -> dict[str, dict[str, Any]]:
 
 # ======== Remoção ========
 
+
 class DeleteBody(BaseModel):
     nome: str
 
@@ -130,7 +131,7 @@ class DeleteBody(BaseModel):
 @router.delete(
     "/",
     summary="Remover item por nome",
-    description="Remove um item (produto/assinatura/combo) pela **chave do dicionário** (nome)."
+    description="Remove um item (produto/assinatura/combo) pela **chave do dicionário** (nome).",
 )
 def remover_item(body: DeleteBody) -> dict[str, dict[str, Any]]:
     try:

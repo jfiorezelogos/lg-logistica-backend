@@ -12,13 +12,13 @@ from app.services.loader_produtos_info import (
     SKUInfo,
     SKUInfoMapping,
     SKUs,
-    produto_indisponivel,
     load_skus_info,
+    produto_indisponivel,
 )
 from app.services.loader_regras_assinaturas import (
-    normalizar_rules,
-    montar_ofertas_embutidas,
     montar_mapas_cupons,
+    montar_ofertas_embutidas,
+    normalizar_rules,
 )
 
 # Cache simples (pode trocar a implementação em infra/cache.py depois)
@@ -75,19 +75,28 @@ def invalidar_cache_catalogo() -> None:
     except Exception:
         pass
     try:
-        carregar_cfg.cache_clear()   # type: ignore[attr-defined]
+        carregar_cfg.cache_clear()  # type: ignore[attr-defined]
     except Exception:
         pass
 
 
 __all__ = [
     # tipos
-    "SKUInfo", "SKUInfoMapping", "SKUs",
+    "SKUInfo",
+    "SKUInfoMapping",
+    "SKUs",
     # loaders de arquivo
-    "carregar_skus", "carregar_cfg", "invalidar_cache_catalogo",
+    "carregar_skus",
+    "carregar_cfg",
+    "invalidar_cache_catalogo",
     # domínio (reexports)
-    "produto_indisponivel", "load_skus_info",
-    "normalizar_rules", "montar_ofertas_embutidas", "montar_mapas_cupons",
+    "produto_indisponivel",
+    "load_skus_info",
+    "normalizar_rules",
+    "montar_ofertas_embutidas",
+    "montar_mapas_cupons",
     # paths (se quiser usar fora)
-    "BASE_DIR", "SKUS_PATH", "CFG_PATH",
+    "BASE_DIR",
+    "SKUS_PATH",
+    "CFG_PATH",
 ]

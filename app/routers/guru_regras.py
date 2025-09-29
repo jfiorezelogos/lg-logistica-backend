@@ -6,10 +6,11 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-# service de regras (backend puro)
-from app.services import guru_regras as regras
 # modelos pydantic centralizados
 from app.schemas.guru_regras import ConfigOfertas, Regra
+
+# service de regras (backend puro)
+from app.services import guru_regras as regras
 
 router = APIRouter(prefix="/guru/regras", tags=["Regras"])
 
@@ -21,11 +22,14 @@ RegraList = list[dict[str, Any]]  # resposta “bruta” (shape do arquivo)
 
 # ======================= Helpers (id → idx) =======================
 
+
 def _load_rules() -> list[dict[str, Any]]:
     return regras.carregar_regras(CFG_PATH)
 
+
 def _save_rules(rules: list[dict[str, Any]]) -> None:
     regras.salvar_regras(CFG_PATH, rules)
+
 
 def _find_idx_by_id(rules: list[dict[str, Any]], rid: str) -> int:
     for i, r in enumerate(rules):
@@ -36,11 +40,12 @@ def _find_idx_by_id(rules: list[dict[str, Any]], rid: str) -> int:
 
 # ======================= Endpoints =======================
 
+
 @router.get(
     "/",
     response_model=RegraList,
     summary="Listar regras",
-    description="Retorna todas as regras carregadas do arquivo `config_ofertas.json`."
+    description="Retorna todas as regras carregadas do arquivo `config_ofertas.json`.",
 )
 def listar_regras() -> RegraList:
     try:
@@ -75,7 +80,7 @@ def substituir_todas_regras(body: ConfigOfertas) -> ConfigOfertas:
     "/",
     response_model=RegraList,
     summary="Adicionar regra",
-    description="Adiciona uma nova regra. Se `id` não for enviado, será gerado automaticamente."
+    description="Adiciona uma nova regra. Se `id` não for enviado, será gerado automaticamente.",
 )
 def adicionar_regra(regra_in: Regra) -> RegraList:
     try:
@@ -91,7 +96,7 @@ def adicionar_regra(regra_in: Regra) -> RegraList:
     "/{regra_id}",
     response_model=RegraList,
     summary="Editar regra",
-    description="Edita a regra identificada por `id`. Mantém o `id` original."
+    description="Edita a regra identificada por `id`. Mantém o `id` original.",
 )
 def editar_regra(regra_id: str, regra_in: Regra) -> RegraList:
     try:
@@ -110,7 +115,7 @@ def editar_regra(regra_id: str, regra_in: Regra) -> RegraList:
     "/{regra_id}",
     response_model=RegraList,
     summary="Remover regra",
-    description="Remove a regra identificada por `id`."
+    description="Remove a regra identificada por `id`.",
 )
 def remover_regra(regra_id: str) -> RegraList:
     try:
@@ -129,7 +134,7 @@ def remover_regra(regra_id: str) -> RegraList:
     "/contexto",
     response_model=dict[str, Any],
     summary="Contexto inicial",
-    description="Retorna `{ rules, produtos_guru, config_path }`, equivalente ao estado inicial que a UI carregava."
+    description="Retorna `{ rules, produtos_guru, config_path }`, equivalente ao estado inicial que a UI carregava.",
 )
 def contexto_gerenciador() -> dict[str, Any]:
     try:
@@ -142,7 +147,7 @@ def contexto_gerenciador() -> dict[str, Any]:
     "/produtos",
     response_model=list[dict[str, Any]],
     summary="Listar produtos do Guru",
-    description="Consulta a API do Guru e retorna a lista completa de produtos (paginada automaticamente)."
+    description="Consulta a API do Guru e retorna a lista completa de produtos (paginada automaticamente).",
 )
 def listar_produtos_guru(limit: int = Query(100, ge=1, le=500)) -> list[dict[str, Any]]:
     try:

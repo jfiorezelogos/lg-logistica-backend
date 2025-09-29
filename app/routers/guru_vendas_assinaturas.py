@@ -4,7 +4,6 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
-
 from pydantic import BaseModel
 
 from app.services.coleta_guru import executar_worker_guru

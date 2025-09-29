@@ -18,8 +18,8 @@ from typing import Any, Protocol, TypedDict, cast
 # terceiros
 from unidecode import unidecode
 
-from app.services.guru_client import LIMITE_INFERIOR, coletar_vendas_com_retry, dividir_periodos_coleta_api_guru
 from app.common.settings import settings
+from app.services.guru_client import LIMITE_INFERIOR, coletar_vendas_com_retry, dividir_periodos_coleta_api_guru
 from app.services.loader_produtos_info import produto_indisponivel
 from app.utils.datetime_helpers import (
     UTC,

@@ -13,8 +13,8 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     FRETEBARATO_URL: str = ""
     APP_ENV: str = "dev"
-    GURU_MAX_CONCURRENCY: int = 4   # quantas requisições simultâneas
-    GURU_QPS: float = 3.0           # requisições por segundo (média)
+    GURU_MAX_CONCURRENCY: int = 4  # quantas requisições simultâneas
+    GURU_QPS: float = 3.0  # requisições por segundo (média)
 
     model_config = SettingsConfigDict(
         env_file=str(BASE_DIR / ".env"),  # busca o .env na raiz do projeto

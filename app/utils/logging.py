@@ -18,4 +18,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-__all__ = ["correlation_id_ctx", "set_correlation_id", "get_correlation_id"]
+__all__ = ["correlation_id_ctx", "get_correlation_id", "set_correlation_id"]

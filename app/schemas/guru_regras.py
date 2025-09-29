@@ -1,40 +1,48 @@
 # app/schemas/regras.py
 from __future__ import annotations
-from typing import Any, Literal, Optional, Annotated
+
+from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
+
 from pydantic import BaseModel, Field, model_validator
+
 
 class CupomCfg(BaseModel):
     nome: str = Field(..., description="Código do cupom")
 
+
 class OfertaCfg(BaseModel):
-    produto_id: Optional[str] = None
-    oferta_id: Optional[str] = None
-    nome: Optional[str] = None
+    produto_id: str | None = None
+    oferta_id: str | None = None
+    nome: str | None = None
+
 
 class ActionAdicionarBrindes(BaseModel):
     type: Literal["adicionar_brindes"] = "adicionar_brindes"
     brindes: list[str | dict[str, Any]]
-    box: Optional[str] = None
+    box: str | None = None
+
 
 class ActionAlterarBox(BaseModel):
     type: Literal["alterar_box"] = "alterar_box"
     box: str
-    brindes: Optional[list[str | dict[str, Any]]] = None
+    brindes: list[str | dict[str, Any]] | None = None
+
 
 Action = Annotated[ActionAdicionarBrindes | ActionAlterarBox, Field(discriminator="type")]
 
+
 class Regra(BaseModel):
-    id: Optional[UUID] = None
+    id: UUID | None = None
     applies_to: Literal["cupom", "oferta"]
     enabled: bool = True
-    assinaturas: Optional[list[str]] = None
-    cupom: Optional[CupomCfg] = None
-    oferta: Optional[OfertaCfg] = None
+    assinaturas: list[str] | None = None
+    cupom: CupomCfg | None = None
+    oferta: OfertaCfg | None = None
     action: Action
 
     @model_validator(mode="after")
-    def _check_alvos(self) -> "Regra":
+    def _check_alvos(self) -> Regra:
         if self.applies_to == "cupom":
             if self.cupom is None:
                 raise ValueError("Para applies_to='cupom', o bloco 'cupom' é obrigatório.")
@@ -48,10 +56,11 @@ class Regra(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def _ensure_id(self) -> "Regra":
+    def _ensure_id(self) -> Regra:
         if self.id is None:
             self.id = uuid4()
         return self
+
 
 class ConfigOfertas(BaseModel):
     rules: list[Regra] = Field(default_factory=list)

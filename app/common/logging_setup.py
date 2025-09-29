@@ -199,19 +199,13 @@ def get_logger(name: str | None = None) -> logging.Logger:
     """Sugar para obter logger tipado."""
     return logging.getLogger(name or "lglog")
 
+
 # common/logging_setup.py  (trechos novos/alterados)
 
 from __future__ import annotations
 
-import io
 import logging
-import os
-import re
-import sys
-import uuid
-from collections.abc import Iterable
 from contextvars import ContextVar
-from typing import Any, TextIO, cast
 
 from pythonjsonlogger import jsonlogger
 
@@ -250,6 +244,7 @@ class _StreamToLogger(io.TextIOBase):
 
 
 _redirected_once: bool = False
+
 
 def redirect_std_streams_to_logger(
     *,

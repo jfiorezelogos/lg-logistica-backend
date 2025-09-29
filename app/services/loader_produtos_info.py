@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any, TypedDict, cast
 
 import unidecode
@@ -72,4 +72,4 @@ def load_skus_info(path: str | Path | None = None) -> SKUs:
     return skus_info
 
 
-__all__ = ["SKUInfo", "SKUInfoMapping", "SKUs", "produto_indisponivel", "load_skus_info"]
+__all__ = ["SKUInfo", "SKUInfoMapping", "SKUs", "load_skus_info", "produto_indisponivel"]

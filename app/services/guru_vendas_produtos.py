@@ -4,9 +4,6 @@ from collections.abc import Mapping, Sequence
 from datetime import date
 from typing import Any, cast
 
-# helpers de data
-from app.utils.datetime_helpers import _as_dt, _as_iso
-
 # primitives de coleta no Guru
 from app.services.guru_client import (
     LIMITE_INFERIOR,
@@ -15,6 +12,9 @@ from app.services.guru_client import (
     coletar_vendas_com_retry,
     dividir_periodos_coleta_api_guru,
 )
+
+# helpers de data
+from app.utils.datetime_helpers import _as_dt, _as_iso
 
 
 def iniciar_coleta_vendas_produtos(
