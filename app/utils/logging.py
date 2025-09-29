@@ -1,24 +1,21 @@
-# app/services/logging_utils.py
-import contextvars
-import uuid
+# app/utils/logging.py
+from __future__ import annotations
 
-# ContextVar global para guardar o correlation_id
-correlation_id_ctx: contextvars.ContextVar[str] = contextvars.ContextVar("correlation_id", default="")
+import warnings
 
+# Re-exporta do ponto único de verdade
+from app.common.logging_setup import (  # ajuste o path conforme seu projeto
+    correlation_id_ctx,
+    get_correlation_id,
+    set_correlation_id,
+)
 
-def set_correlation_id(value: str | None = None) -> str:
-    """
-    Define (ou gera) o correlation_id para o contexto atual.
-    Retorna o valor definido.
-    """
-    cid = value or str(uuid.uuid4())
-    correlation_id_ctx.set(cid)
-    return cid
+# (opcional) alerta de depreciação suave para quem importar este módulo diretamente
+warnings.warn(
+    "app.services.logging_utils foi unificado: use app.common.logging_setup "
+    "para correlation_id e helpers de logging.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
-
-def get_correlation_id() -> str:
-    """
-    Recupera o correlation_id atual do contexto.
-    Se nenhum valor foi definido ainda, retorna string vazia.
-    """
-    return correlation_id_ctx.get()
+__all__ = ["correlation_id_ctx", "set_correlation_id", "get_correlation_id"]

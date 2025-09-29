@@ -19,6 +19,7 @@ from typing import Any, Protocol, TypedDict, cast
 from unidecode import unidecode
 
 from app.services.guru_client import LIMITE_INFERIOR, coletar_vendas_com_retry, dividir_periodos_coleta_api_guru
+from app.common.settings import settings
 from app.services.loader_produtos_info import produto_indisponivel
 from app.utils.datetime_helpers import (
     UTC,
@@ -213,7 +214,7 @@ def gerenciar_coleta_vendas_assinaturas(
     ) -> bool:
         if not tarefas:
             return True
-        max_workers = min(12, len(tarefas))
+        max_workers = min(getattr(settings, "GURU_MAX_CONCURRENCY", 4), len(tarefas))
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [
                 executor.submit(

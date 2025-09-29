@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 from typing import Any
 
 
@@ -10,10 +9,7 @@ def normalizar_rules(cfg: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def montar_ofertas_embutidas(cfg: dict[str, Any]) -> dict[str, str]:
-    """
-    Constrói {oferta_id: nome_do_produto_embutido} a partir das regras de 'oferta'
-    cujo action.type == 'adicionar_brindes'. Se houver lista de brindes, pega o primeiro.
-    """
+    """Gera {oferta_id: nome_do_produto_embutido} a partir de regras applies_to='oferta' com action.type='adicionar_brindes'."""
     mapa: dict[str, str] = {}
     for r in cfg.get("rules", []):
         if (r.get("applies_to") or "").strip().lower() != "oferta":
@@ -41,9 +37,9 @@ def montar_ofertas_embutidas(cfg: dict[str, Any]) -> dict[str, str]:
 def montar_mapas_cupons(cfg: dict[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
     """
     Retorna:
-      - cupons_cdf:     {cupom_lower: box}  -> Anual, 2 anos/Bianual, 3 anos/Trianual
-      - cupons_bi_mens: {cupom_lower: box}  -> Bimestral, Mensal
-    Considera apenas regras de cupom com action.type == 'alterar_box'.
+      - cupons_cdf:     {cupom_lower: box}  -> Anual / 2 anos / 3 anos
+      - cupons_bi_mens: {cupom_lower: box}  -> Bimestral / Mensal
+    Só considera regras applies_to='cupom' com action.type='alterar_box'.
     """
     cupons_cdf: dict[str, str] = {}
     cupons_bi_mens: dict[str, str] = {}
@@ -73,4 +69,4 @@ def montar_mapas_cupons(cfg: dict[str, Any]) -> tuple[dict[str, str], dict[str, 
     return cupons_cdf, cupons_bi_mens
 
 
-__all__ = ["montar_mapas_cupons", "montar_ofertas_embutidas", "normalizar_rules"]
+__all__ = ["normalizar_rules", "montar_ofertas_embutidas", "montar_mapas_cupons"]

@@ -1,6 +1,8 @@
-# common/logging_setup.py
+# common/logging_setup.py  (trechos novos/alterados)
+
 from __future__ import annotations
 
+import io
 import logging
 import os
 import re
@@ -8,7 +10,7 @@ import sys
 import uuid
 from collections.abc import Iterable
 from contextvars import ContextVar
-from typing import Any
+from typing import Any, TextIO, cast
 
 from pythonjsonlogger import jsonlogger
 
@@ -196,3 +198,81 @@ def bind_context(*, app_env: str | None = None, correlation_id: str | None = Non
 def get_logger(name: str | None = None) -> logging.Logger:
     """Sugar para obter logger tipado."""
     return logging.getLogger(name or "lglog")
+
+# common/logging_setup.py  (trechos novos/alterados)
+
+from __future__ import annotations
+
+import io
+import logging
+import os
+import re
+import sys
+import uuid
+from collections.abc import Iterable
+from contextvars import ContextVar
+from typing import Any, TextIO, cast
+
+from pythonjsonlogger import jsonlogger
+
+# ... (restante do arquivo COMO ESTÁ) ...
+
+
+# ---------------------------
+# Captura opcional de stdout/stderr
+# ---------------------------
+class _StreamToLogger(io.TextIOBase):
+    def __init__(self, logger: logging.Logger, level: int) -> None:
+        super().__init__()
+        self.logger = logger
+        self.level = level
+        self._buf = ""
+
+    def write(self, buf: str) -> int:
+        if not isinstance(buf, str):
+            buf = str(buf)
+        self._buf += buf
+        written = len(buf)
+        while "\n" in self._buf:
+            line, self._buf = self._buf.split("\n", 1)
+            line = line.strip()
+            if line:
+                self.logger.log(self.level, line)
+        return written
+
+    def flush(self) -> None:
+        if self._buf.strip():
+            self.logger.log(self.level, self._buf.strip())
+            self._buf = ""
+
+    def isatty(self) -> bool:
+        return False
+
+
+_redirected_once: bool = False
+
+def redirect_std_streams_to_logger(
+    *,
+    capture_stdout: bool = True,
+    capture_stderr: bool = True,
+    stdout_logger_name: str = "stdout",
+    stderr_logger_name: str = "stderr",
+    env_switch: str = "LOG_CAPTURE_STDOUT",  # "1" habilita, "0/false" desabilita
+) -> None:
+    """
+    Redireciona stdout/stderr para loggers. Idempotente.
+    Respeita variável de ambiente env_switch (default: LOG_CAPTURE_STDOUT=1).
+    """
+    global _redirected_once
+    if _redirected_once:
+        return
+
+    enabled = os.getenv(env_switch, "1") not in ("0", "false", "False")
+    if not enabled:
+        return
+
+    if capture_stdout:
+        sys.stdout = cast(TextIO, _StreamToLogger(logging.getLogger(stdout_logger_name), logging.INFO))
+    if capture_stderr:
+        sys.stderr = cast(TextIO, _StreamToLogger(logging.getLogger(stderr_logger_name), logging.ERROR))
+    _redirected_once = True

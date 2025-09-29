@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
 from pathlib import Path
+from collections.abc import Mapping, Sequence
 from typing import Any, TypedDict, cast
 
 import unidecode
 
 
-# ---------- Tipos ----------
 class SKUInfo(TypedDict, total=False):
     sku: str
     peso: float | int
@@ -22,7 +21,6 @@ SKUInfoMapping = Mapping[str, Any]
 SKUs = Mapping[str, SKUInfoMapping]
 
 
-# ---------- Funções ----------
 def produto_indisponivel(
     produto_nome: str,
     *,
@@ -35,7 +33,6 @@ def produto_indisponivel(
     skus: Mapping[str, Mapping[str, Any]] = skus_info or {}
     info: Mapping[str, Any] | None = skus.get(produto_nome)
 
-    # fallback por normalização do nome
     if info is None and produto_nome:
         alvo = unidecode.unidecode(str(produto_nome)).lower().strip()
         for nome, i in skus.items():
@@ -43,7 +40,6 @@ def produto_indisponivel(
                 info = i
                 break
 
-    # fallback por SKU
     if info is None and sku:
         sku_norm = (sku or "").strip().upper()
         for i in skus.values():
@@ -60,7 +56,6 @@ def load_skus_info(path: str | Path | None = None) -> SKUs:
     Se não existir, cria com um exemplo mínimo.
     """
     if path is None:
-        # raiz do projeto (ajuste se precisar)
         base_dir = Path(__file__).resolve().parents[2]
         path = base_dir / "skus.json"
     p = Path(path)
@@ -69,7 +64,6 @@ def load_skus_info(path: str | Path | None = None) -> SKUs:
         with p.open(encoding="utf-8") as f:
             return cast(SKUs, json.load(f))
 
-    # fallback se ainda não existir
     skus_info: dict[str, Any] = {
         "Exemplo Produto": {"sku": "X001", "peso": 1.0, "tipo": "produto", "guru_ids": []},
     }
@@ -78,4 +72,4 @@ def load_skus_info(path: str | Path | None = None) -> SKUs:
     return skus_info
 
 
-__all__ = ["SKUInfo", "SKUInfoMapping", "SKUs", "load_skus_info", "produto_indisponivel"]
+__all__ = ["SKUInfo", "SKUInfoMapping", "SKUs", "produto_indisponivel", "load_skus_info"]

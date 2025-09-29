@@ -9,6 +9,9 @@ uvicorn[standard]==0.30.6
 pydantic==2.9.2
 pydantic-settings==2.5.2
 
+# Logging
+python-json-logger==2.0.7
+
 # Data / utilitários
 pandas==2.2.3
 python-dateutil==2.9.0.post0
