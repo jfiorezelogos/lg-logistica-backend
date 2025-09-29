@@ -1,18 +1,20 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, time as dtime, timedelta
-from typing import Any, Optional
+from typing import Any
 
 # Tenta usar um parser robusto; se não houver, cai para fromisoformat
 try:
     from dateutil.parser import parse as parse_date  # type: ignore
 except Exception:  # pragma: no cover
+
     def parse_date(s: str) -> datetime:
         # Fallback simples: ISO estrito
         return datetime.fromisoformat(s)
 
 
 # ============== FUNÇÕES DE PERÍODO / DATA ==============
+
 
 def _aware_utc(dt: datetime) -> datetime:
     """Garante datetime com tzinfo=UTC (se vier naïve, aplica UTC; se vier com tz, converte para UTC)."""
@@ -99,7 +101,7 @@ def _as_iso(d: str | date) -> str:
         return datetime.fromisoformat(d).date().isoformat()
 
 
-def _to_dt(val: Any) -> Optional[datetime]:
+def _to_dt(val: Any) -> datetime | None:
     """Converte val -> datetime (UTC aware).
     Aceita: datetime | ISO string | timestamp (s/ms) | objetos com .toPyDateTime()
     """

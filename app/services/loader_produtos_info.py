@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any, TypedDict, cast
 
 import unidecode
 
 
+# ---------- Tipos ----------
 class SKUInfo(TypedDict, total=False):
     sku: str
     peso: float | int
@@ -21,6 +22,7 @@ SKUInfoMapping = Mapping[str, Any]
 SKUs = Mapping[str, SKUInfoMapping]
 
 
+# ---------- Funções ----------
 def produto_indisponivel(
     produto_nome: str,
     *,
@@ -52,23 +54,28 @@ def produto_indisponivel(
     return bool(info and info.get("indisponivel", False))
 
 
-# 🔹 helper centralizado para carregar o skus.json
-def load_skus_info(path: str | None = None) -> SKUs:
+def load_skus_info(path: str | Path | None = None) -> SKUs:
     """
     Carrega o dicionário de SKUs a partir de `skus.json`.
-    Se não existir, cria com alguns exemplos mínimos.
+    Se não existir, cria com um exemplo mínimo.
     """
     if path is None:
-        path = os.path.join(os.path.dirname(__file__), "..", "skus.json")
+        # raiz do projeto (ajuste se precisar)
+        base_dir = Path(__file__).resolve().parents[2]
+        path = base_dir / "skus.json"
+    p = Path(path)
 
-    if os.path.exists(path):
-        with open(path, encoding="utf-8") as f:
+    if p.exists():
+        with p.open(encoding="utf-8") as f:
             return cast(SKUs, json.load(f))
 
     # fallback se ainda não existir
     skus_info: dict[str, Any] = {
         "Exemplo Produto": {"sku": "X001", "peso": 1.0, "tipo": "produto", "guru_ids": []},
     }
-    with open(path, "w", encoding="utf-8") as f:
+    with p.open("w", encoding="utf-8") as f:
         json.dump(skus_info, f, indent=4, ensure_ascii=False)
     return skus_info
+
+
+__all__ = ["SKUInfo", "SKUInfoMapping", "SKUs", "load_skus_info", "produto_indisponivel"]

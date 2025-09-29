@@ -2,7 +2,18 @@ from __future__ import annotations
 
 from datetime import date
 from typing import Any, Mapping, Optional, Sequence, cast
-from services.datetime_utils import _as_iso
+
+# helpers de data
+from utils.datetime_helpers import _as_iso, _as_dt
+
+# primitives de coleta no Guru
+from app.services.coleta_guru import (
+    LIMITE_INFERIOR,
+    dividir_periodos_coleta_api_guru,
+    coletar_vendas,
+    coletar_vendas_com_retry,
+    TransientGuruError,
+)
 
 
 def iniciar_coleta_vendas_produtos(
@@ -65,3 +76,103 @@ def iniciar_coleta_vendas_produtos(
     }
 
     return payload
+
+def preparar_coleta_vendas_produtos(
+    data_ini: str,
+    data_fim: str,
+    nome_produto: str | None,
+    *,
+    skus_info: Mapping[str, Mapping[str, Any]],
+    box_nome: str = "",
+    transportadoras_permitidas: Sequence[str] = (),
+) -> dict[str, Any]:
+    """Prepara o payload para coleta de vendas de produtos (backend puro)."""
+
+    ini_iso = _as_iso(data_ini)
+    fim_iso = _as_iso(data_fim)
+
+    # valida intervalo
+    if ini_iso > fim_iso:
+        raise ValueError("data_ini não pode ser posterior a data_fim.")
+
+    # filtra produtos
+    if nome_produto:
+        info = skus_info.get(nome_produto, {})
+        if str(info.get("tipo", "")).strip().lower() == "assinatura":
+            raise ValueError(f"'{nome_produto}' é uma assinatura; selecione apenas produtos.")
+        produtos_alvo: dict[str, Mapping[str, Any]] = {nome_produto: info}
+    else:
+        produtos_alvo = {
+            nome: info
+            for nome, info in skus_info.items()
+            if str(info.get("tipo", "")).strip().lower() != "assinatura"
+        }
+
+    # extrai IDs do Guru
+    produtos_ids: list[str] = []
+    for info in produtos_alvo.values():
+        gids = cast(Sequence[Any], info.get("guru_ids", []))
+        for gid in gids:
+            s = str(gid).strip()
+            if s:
+                produtos_ids.append(s)
+
+    if not produtos_ids:
+        raise ValueError("Nenhum produto elegível com 'guru_ids' válidos encontrado para a coleta.")
+
+    return {
+        "modo": "produtos",
+        "inicio": ini_iso,
+        "fim": fim_iso,
+        "produtos_ids": produtos_ids,
+        "box_nome": (box_nome or "").strip(),
+        "transportadoras_permitidas": list(transportadoras_permitidas or []),
+    }
+
+def coletar_vendas_produtos(
+    dados: Mapping[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
+    """
+    Coleta transações de PRODUTOS com base no payload:
+      - dados['produtos_ids']: list[str]
+      - dados['inicio'] / dados['fim']: "YYYY-MM-DD" (ou ISO com tempo)
+    Usa janelas divididas por bimestres quadrimestrais (abr/ago/dez) via dividir_periodos_coleta_api_guru.
+    Retorna (transacoes, reservado, dados_ecoado).
+    """
+    produtos_ids = list(map(str, dados.get("produtos_ids") or []))
+    if not produtos_ids:
+        raise ValueError("Payload inválido: 'produtos_ids' vazio.")
+
+    # normaliza datas e aplica limite inferior de segurança
+    ini_dt = _as_dt(dados.get("inicio"))
+    end_dt = _as_dt(dados.get("fim"))
+    if ini_dt > end_dt:
+        raise ValueError("Intervalo inválido: inicio > fim.")
+
+    # (opcional) clamp no limite inferior, se desejar
+    if ini_dt < LIMITE_INFERIOR:
+        ini_dt = LIMITE_INFERIOR
+
+    # divide o período em blocos
+    blocos = dividir_periodos_coleta_api_guru(ini_dt, end_dt)  # -> [(ini_iso, fim_iso), ...]
+    if not blocos:
+        return [], {}, dict(dados)
+
+    transacoes: list[dict[str, Any]] = []
+
+    # execução simples (sequencial). Se quiser, paralelize como em assinaturas.
+    for pid in produtos_ids:
+        for (ini_iso, fim_iso) in blocos:
+            try:
+                pagina = coletar_vendas(pid, ini_iso, fim_iso)
+                if pagina:
+                    transacoes.extend(pagina)
+            except TransientGuruError as e:
+                # aplica retry externo com backoff
+                pagina = coletar_vendas_com_retry(pid, ini_iso, fim_iso)
+                if pagina:
+                    transacoes.extend(pagina)
+                else:
+                    print(f"[⚠️] Produto {pid} sem dados após retries: {e}")
+
+    return transacoes, {}, dict(dados)

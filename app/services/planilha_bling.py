@@ -1,13 +1,19 @@
 import datetime as dt
 import traceback
 from collections import defaultdict
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any, TypedDict, cast
 
 import pandas as pd
-from app.services.coleta_vendas_assinaturas import AplicarRegrasAssinaturas, aplicar_regras_assinaturas, validar_regras_assinatura
 from dateutil.parser import parse as parse_date
 from mapeamento import SKUInfo, SKUs, produto_indisponivel
+
+from app.services.coleta_vendas_assinaturas import (
+    AplicarRegrasAssinaturas,
+    aplicar_regras_assinaturas,
+    validar_regras_assinatura,
+)
 
 UTC = dt.UTC
 
@@ -21,7 +27,6 @@ def padronizar_planilha_bling(df: pd.DataFrame, preservar_extras: bool = True) -
         "Número pedido",
         "Nome Comprador",
         "Data",
-        "Data Pedido",
         "CPF/CNPJ Comprador",
         "Endereço Comprador",
         "Bairro Comprador",
@@ -60,6 +65,7 @@ def padronizar_planilha_bling(df: pd.DataFrame, preservar_extras: bool = True) -
         "Vendedor",
         "Forma Pagamento",
         "ID Forma Pagamento",
+        "Data Pedido",
         "transaction_id",
         "subscription_id",
         "product_id",
@@ -156,26 +162,131 @@ def gerar_linha_base_planilha(
     }
 
 
+def desmembrar_combo_planilha(
+    valores: Mapping[str, Any],
+    linha_base: dict[str, Any],
+    skus_info: Mapping[str, Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """
+    Desmembra um combo em itens simples para a planilha.
+
+    Convenções esperadas:
+      - valores["produto_principal"] = nome do combo
+      - valores["valor_total"]       = total do combo (float/int ou string com vírgula/ponto)
+      - skus_info[nome_combo]["composto_de"] = [SKUs dos itens]
+      - skus_info[produto_simples]["sku"] = SKU do produto simples
+    """
+    nome_combo: str = str(valores.get("produto_principal", "")).strip()
+    info_combo: Mapping[str, Any] = skus_info.get(nome_combo, {})
+    comp_raw = info_combo.get("composto_de", []) or []
+
+    # Normaliza componentes como lista de strings não vazias
+    skus_componentes: list[str] = [str(s).strip() for s in comp_raw if str(s).strip()]
+
+    # Mapa auxiliares para lookup O(1)
+    sku_to_nome: dict[str, str] = {}
+    nome_to_sku: dict[str, str] = {}
+    for nome, info in skus_info.items():
+        sku = str(info.get("sku", "") or "").strip()
+        if sku:
+            sku_to_nome.setdefault(sku, nome)
+        nome_to_sku.setdefault(nome, sku)
+
+    # Helper: parse total (aceita "12,34" / "12.34" / "1.234,56")
+    def _to_dec(v: Any) -> Decimal:
+        if v is None:
+            return Decimal("0.00")
+        if isinstance(v, (int, float)):
+            return Decimal(str(v)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        s = str(v).strip()
+        # remove separador de milhar e normaliza decimal
+        s = s.replace(".", "").replace(",", ".")
+        try:
+            return Decimal(s).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        except InvalidOperation:
+            return Decimal("0.00")
+
+    def _fmt(d: Decimal) -> str:
+        # retorna "12,34"
+        return f"{d:.2f}".replace(".", ",")
+
+    total = _to_dec(valores.get("valor_total"))
+    n = len(skus_componentes)
+
+    # Se não há componentes, retorna a linha original (sem alterar valores)
+    if n == 0:
+        return [linha_base]
+
+    # Resolve (nome_item, sku_item) para cada componente.
+    # A lista "composto_de" pode conter SKU ou, eventualmente, nomes.
+    itens_resolvidos: list[tuple[str, str]] = []
+    for comp in skus_componentes:
+        if comp in sku_to_nome:  # comp é SKU conhecido
+            itens_resolvidos.append((sku_to_nome[comp], comp))
+        elif comp in nome_to_sku:  # comp é nome conhecido
+            itens_resolvidos.append((comp, nome_to_sku[comp]))
+        else:
+            # fallback: mantém comp como SKU e nome = comp
+            itens_resolvidos.append((comp, comp))
+
+    linhas: list[dict[str, Any]] = []
+
+    # total <= 0: gera itens com zero
+    if total <= Decimal("0.00"):
+        for nome_item, sku_item in itens_resolvidos:
+            nova = dict(linha_base)
+            nova["Produto"] = nome_item
+            nova["SKU"] = sku_item
+            nova["Valor Unitário"] = "0,00"
+            nova["Valor Total"] = "0,00"
+            nova["Combo"] = nome_combo  # remova se não quiser esta coluna
+            try:
+                nova["indisponivel"] = "S" if produto_indisponivel(nome_item, sku=sku_item, skus_info=skus_info) else ""
+            except Exception:
+                nova["indisponivel"] = ""
+            linhas.append(nova)
+        return linhas
+
+    # Rateio uniforme com distribuição de centavos (soma == total)
+    quota = (total / n).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    subtotal = quota * (n - 1)
+    ultimo = (total - subtotal).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    for i, (nome_item, sku_item) in enumerate(itens_resolvidos):
+        valor_item = quota if i < n - 1 else ultimo
+        nova = dict(linha_base)
+        nova["Produto"] = nome_item
+        nova["SKU"] = sku_item
+        nova["Valor Unitário"] = _fmt(valor_item)
+        nova["Valor Total"] = _fmt(valor_item)
+        nova["Combo"] = nome_combo  # opcional
+        try:
+            nova["indisponivel"] = "S" if produto_indisponivel(nome_item, sku=sku_item, skus_info=skus_info) else ""
+        except Exception:
+            nova["indisponivel"] = ""
+        linhas.append(nova)
+
+    return linhas
+
+
 def montar_planilha_vendas_guru(
     transacoes: Sequence[Mapping[str, Any] | Sequence[Mapping[str, Any]]],
     dados: Mapping[str, Any],
-    atualizar_etapa: Callable[[str, int, int], Any] | None,
     skus_info: Mapping[str, Mapping[str, Any]],
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, int]]]:
-
-    df_planilha_parcial = pd.DataFrame()
-    mapa_transaction_id_por_linha: dict[int, str] = {}
-    brindes_indisp_set: set[str] = set()
-    embutidos_indisp_set: set[str] = set()
-    boxes_indisp_set: set[str] = set()
-
-    # contagem por tipo (apenas assinaturas)
-    tipos = ["anuais", "bimestrais", "bianuais", "trianuais", "mensais"]
-    contagem: dict[str, dict[str, int]] = {tipo: {"assinaturas": 0, "embutidos": 0, "cupons": 0} for tipo in tipos}
-
+    """
+    Backend puro: trata **assinaturas** e **produtos** (modo em dados['modo']).
+    - Sem UI, sem estado/cancelador/callbacks.
+    - Mantém contagem por tipo (para assinaturas); em produtos, contagens ficam zeradas.
+    Retorna (linhas_planilha, contagem).
+    """
     linhas_planilha: list[dict[str, Any]] = []
-    offset = len(df_planilha_parcial)
 
+    # Contagem por tipo (apenas assinaturas)
+    tipos = ["anuais", "bimestrais", "bianuais", "trianuais", "mensais"]
+    contagem: dict[str, dict[str, int]] = {t: {"assinaturas": 0, "embutidos": 0, "cupons": 0} for t in tipos}
+
+    # ---------------- Helpers ----------------
     def _ckey(tp: str) -> str:
         t = (tp or "").strip().lower()
         if t in contagem:
@@ -189,21 +300,17 @@ def montar_planilha_vendas_guru(
         }
         return aliases.get(t, "bimestrais")
 
-    def _append_linha(linha: dict[str, Any], transaction_id: str) -> None:
-        linhas_planilha.append(linha)
-        mapa_transaction_id_por_linha[offset + len(linhas_planilha) - 1] = transaction_id
-
     def _flag_indisp(nome: str, sku: str | None = None) -> str:
         try:
-            return "S" if produto_indisponivel(nome, sku=sku) else ""
+            return "S" if produto_indisponivel(nome, sku=sku, skus_info=skus_info) else ""
         except Exception:
             return ""
 
-    def _aplica_janela(dados_local: Mapping[str, Any], dt: dt.datetime) -> bool:
+    def _aplica_janela(dados_local: Mapping[str, Any], dtref: dt.datetime) -> bool:
         try:
-            return bool(validar_regras_assinatura(cast(dict[Any, Any], dados_local), dt))
-        except Exception as e:
-            print(f"[DEBUG janela-skip] Ignorando janela por falta de contexto: {e}")
+            # validar_regras_assinatura espera um dict mutável
+            return bool(validar_regras_assinatura(cast(dict[str, Any], dados_local), dtref))
+        except Exception:
             return False
 
     def _to_ts(val: Any) -> float | None:
@@ -211,7 +318,7 @@ def montar_planilha_vendas_guru(
             return None
         if isinstance(val, (int, float)):
             v = float(val)
-            if v > 1e12:  # ms -> s
+            if v > 1e12:  # ms → s
                 v /= 1000.0
             return v
         if isinstance(val, dt.datetime):
@@ -233,7 +340,7 @@ def montar_planilha_vendas_guru(
                 return None
         return None
 
-    # flatten defensivo
+    # ---------------- Normalização das transações ----------------
     transacoes_corrigidas: list[Mapping[str, Any]] = []
     for idx, t in enumerate(transacoes):
         if isinstance(t, Mapping):
@@ -247,15 +354,95 @@ def montar_planilha_vendas_guru(
                     print(f"[⚠️ Ignorado] Item inesperado do tipo {type(sub)} dentro de transacoes[{idx}]")
         else:
             print(f"[⚠️ Ignorado] transacoes[{idx}] é do tipo {type(t)} e será ignorado")
-
     transacoes = transacoes_corrigidas
     total_transacoes = len(transacoes)
 
-    ids_planos_validos: Sequence[str] = cast(Sequence[str], dados.get("ids_planos_todos", []))
+    # ---------------- Contexto comum ----------------
+    modo = (str(dados.get("modo") or "assinaturas")).strip().lower()
     ofertas_embutidas = dados.get("ofertas_embutidas", {}) or {}
     modo_periodo_sel = (dados.get("modo_periodo") or "").strip().upper()
 
-    # ======== SOMENTE ASSINATURAS ========
+    # =========================
+    # 🔀 MODO PRODUTOS
+    # =========================
+    if modo == "produtos":
+        for transacao in transacoes:
+            try:
+                valores = calcular_valores_pedidos(
+                    transacao,
+                    dados,
+                    cast(Mapping[str, SKUInfo], skus_info),
+                    usar_valor_fixo=False,
+                )
+                if not isinstance(valores, Mapping) or not valores.get("transaction_id"):
+                    raise ValueError(f"Valores inválidos retornados: {valores}")
+
+                contact = transacao.get("contact", {})
+                nome_produto = str(valores["produto_principal"])
+                info_prod = skus_info.get(nome_produto, {})
+                sku_produto = str(info_prod.get("sku", "") or "")
+
+                linha_base = gerar_linha_base_planilha(contact, valores, transacao)
+                linha_base.update(
+                    {
+                        "Produto": nome_produto,
+                        "subscription_id": "",
+                        "SKU": sku_produto,
+                        "Valor Unitário": formatar_valor(valores["valor_unitario"]),
+                        "Valor Total": formatar_valor(valores["valor_total"]),
+                        "indisponivel": _flag_indisp(nome_produto, sku_produto),
+                    }
+                )
+
+                # Se for combo, desmembrar (respeitando regra combo indisponível + mapeado)
+                if info_prod.get("composto_de"):
+                    mapeado = bool(info_prod.get("guru_ids")) and bool(info_prod.get("shopify_ids"))
+                    indisponivel_combo = produto_indisponivel(nome_produto, sku=sku_produto, skus_info=skus_info)
+                    if indisponivel_combo and mapeado:
+                        linha_base["indisponivel"] = "S"
+                        linhas_planilha.append(linha_base)
+                    else:
+                        for linha_item in desmembrar_combo_planilha(valores, linha_base, skus_info):
+                            lp_nome = str(linha_item.get("Produto") or "")
+                            lp_sku = str(linha_item.get("SKU") or "")
+                            linha_item["indisponivel"] = _flag_indisp(lp_nome, lp_sku)
+                            linhas_planilha.append(linha_item)
+                else:
+                    linhas_planilha.append(linha_base)
+
+            except Exception as e:
+                print(f"[❌ ERRO] Transação {transacao.get('id')}: {e}")
+                traceback.print_exc()
+
+        # Para produtos, a contagem por tipo não se aplica (fica zerada)
+        # Normalização final do DF (mantemos a mesma saída da função antiga)
+        try:
+            df_novas = padronizar_planilha_bling(pd.DataFrame(linhas_planilha))
+        except Exception as e:
+            print(f"[DEBUG produtos:df_error] {type(e).__name__}: {e}")
+            if linhas_planilha:
+                print(f"[DEBUG produtos:ultima_linha] keys={list(linhas_planilha[-1].keys())}")
+            raise
+
+        if "indisponivel" in df_novas.columns:
+            df_novas["indisponivel"] = df_novas["indisponivel"].map(
+                lambda x: "S" if str(x).strip().lower() in {"s", "sim", "true", "1"} else ""
+            )
+        else:
+            df_novas["indisponivel"] = [""] * len(df_novas)
+
+        return linhas_planilha, contagem
+
+    # =========================
+    # 🧠 MODO ASSINATURAS
+    # =========================
+    ids_planos_validos: Sequence[str] = cast(Sequence[str], dados.get("ids_planos_todos", []))
+
+    def is_transacao_principal(trans: Mapping[str, Any], ids_validos: Sequence[str]) -> bool:
+        pid = trans.get("product", {}).get("internal_id", "")
+        is_bump = bool(trans.get("is_order_bump", 0))
+        return pid in ids_validos and not is_bump
+
     transacoes_por_assinatura: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
     for trans in transacoes:
         subscription_info = trans.get("subscription")
@@ -264,14 +451,7 @@ def montar_planilha_vendas_guru(
             if sid:
                 transacoes_por_assinatura[str(sid)].append(trans)
 
-    total_assinaturas = len(transacoes_por_assinatura)
-
-    def is_transacao_principal(trans: Mapping[str, Any], ids_validos: Sequence[str]) -> bool:
-        pid = trans.get("product", {}).get("internal_id", "")
-        is_bump = bool(trans.get("is_order_bump", 0))
-        return pid in ids_validos and not is_bump
-
-    for i, (subscription_id, grupo_transacoes) in enumerate(transacoes_por_assinatura.items()):
+    for subscription_id, grupo_transacoes in transacoes_por_assinatura.items():
 
         def safe_parse_date(t: Mapping[str, Any]) -> dt.datetime:
             try:
@@ -287,11 +467,7 @@ def montar_planilha_vendas_guru(
 
         transacoes_principais = [t for t in grupo_ordenado if is_transacao_principal(t, ids_planos_validos)]
         produtos_distintos = {t.get("product", {}).get("internal_id") for t in transacoes_principais}
-
         usar_valor_fixo = len(produtos_distintos) > 1 or transacao_base.get("invoice", {}).get("type") == "upgrade"
-
-        if not transacoes_principais:
-            print(f"[⚠️ AVISO] Nenhuma transação principal encontrada para assinatura {subscription_id}")
 
         if usar_valor_fixo:
             valor_total_principal = 0.0
@@ -300,7 +476,6 @@ def montar_planilha_vendas_guru(
         else:
             valor_total_principal = float(transacao_base.get("payment", {}).get("total", 0))
 
-        # transação “sintética”
         transacao = dict(transacao_base)
         transacao.setdefault("payment", {})
         transacao["payment"]["total"] = valor_total_principal
@@ -333,7 +508,7 @@ def montar_planilha_vendas_guru(
             data_fim_periodo = dados.get("ordered_at_end_periodo")
             data_pedido: dt.datetime = cast(dt.datetime, valores["data_pedido"])
 
-            # cupom
+            # cupom (somente estatística)
             payment_base = transacao_base.get("payment") or {}
             coupon = payment_base.get("coupon") or {}
             cupom_usado = (coupon.get("coupon_code") or "").strip()
@@ -352,8 +527,6 @@ def montar_planilha_vendas_guru(
             )
 
             nome_produto_principal = (dados.get("box_nome") or "").strip() or str(valores["produto_principal"])
-            if produto_indisponivel(nome_produto_principal):
-                boxes_indisp_set.add(nome_produto_principal)
 
             linha["Produto"] = nome_produto_principal
             linha["SKU"] = skus_info.get(nome_produto_principal, {}).get("sku", "")
@@ -365,10 +538,10 @@ def montar_planilha_vendas_guru(
             )
 
             # período (mês/bimestre)
-            def _calc_periodo(periodicidade: str, data_ref: dt.datetime) -> int | str:
-                if periodicidade == "mensal":
+            def _calc_periodo(per: str, data_ref: dt.datetime) -> int | str:
+                if per == "mensal":
                     return data_ref.month
-                elif periodicidade == "bimestral":
+                if per == "bimestral":
                     return 1 + ((data_ref.month - 1) // 2)
                 return ""
 
@@ -380,13 +553,13 @@ def montar_planilha_vendas_guru(
                 mes_ref = data_fim_periodo if isinstance(data_fim_periodo, dt.datetime) else data_pedido
                 linha["periodo"] = _calc_periodo(periodicidade_atual, mes_ref)
 
-            _append_linha(linha, str(valores["transaction_id"]))
+            linhas_planilha.append(linha)
 
-            # janela obrigatória para brindes
+            # janela obrigatória para aplicar brindes/embutidos
             if not _aplica_janela(dados, data_pedido):
                 valores["brindes_extras"] = []
 
-            # brindes extras (somente na janela)
+            # brindes extras
             for br in valores.get("brindes_extras") or []:
                 brinde_nome = str(br.get("nome", "")).strip() if isinstance(br, Mapping) else str(br).strip()
                 if not brinde_nome:
@@ -403,11 +576,9 @@ def montar_planilha_vendas_guru(
                         "subscription_id": subscription_id,
                     }
                 )
-                if lb["indisponivel"] == "S":
-                    brindes_indisp_set.add(brinde_nome)
-                _append_linha(lb, str(valores["transaction_id"]))
+                linhas_planilha.append(lb)
 
-            # embutidos por oferta (validados + dentro da janela)
+            # embutidos por oferta (validade + dentro da janela)
             oferta_id = transacao.get("product", {}).get("offer", {}).get("id")
             oferta_id_clean = str(oferta_id).strip()
             ofertas_normalizadas = {str(k).strip(): v for k, v in ofertas_embutidas.items()}
@@ -437,9 +608,7 @@ def montar_planilha_vendas_guru(
                         "subscription_id": subscription_id,
                     }
                 )
-                if le["indisponivel"] == "S":
-                    embutidos_indisp_set.add(nome_embutido_oferta)
-                _append_linha(le, str(valores["transaction_id"]))
+                linhas_planilha.append(le)
                 contagem[_ckey(tipo_plano)]["embutidos"] += 1
 
             contagem[_ckey(tipo_plano)]["assinaturas"] += 1
@@ -448,37 +617,21 @@ def montar_planilha_vendas_guru(
             print(f"[❌ ERRO] Transação {transacao.get('id')}: {e}")
             traceback.print_exc()
 
-        try:
-            if callable(atualizar_etapa):
-                atualizar_etapa("📦 Processando transações", i + 1, total_assinaturas or 1)
-        except Exception as e:
-            print(f"[❌ ERRO ao atualizar progresso]: {e}")
-            traceback.print_exc()
-
-    # ===== saída/merge =====
+    # ---------------- Saída final ----------------
     try:
-        df_novas = pd.DataFrame(linhas_planilha)
+        df_novas = padronizar_planilha_bling(pd.DataFrame(linhas_planilha))
     except Exception as e:
         print(f"[DEBUG df_error] {type(e).__name__}: {e}")
         if linhas_planilha:
             print(f"[DEBUG ultima_linha] keys={list(linhas_planilha[-1].keys())}")
         raise
 
-    df_novas = padronizar_planilha_bling(df_novas)
     if "indisponivel" in df_novas.columns:
         df_novas["indisponivel"] = df_novas["indisponivel"].map(
             lambda x: "S" if str(x).strip().lower() in {"s", "sim", "true", "1"} else ""
         )
     else:
         df_novas["indisponivel"] = [""] * len(df_novas)
-
-    if not df_planilha_parcial.empty:
-        df_planilha_parcial = pd.concat([df_planilha_parcial, df_novas], ignore_index=True)
-    else:
-        df_planilha_parcial = df_novas
-
-    if callable(atualizar_etapa):
-        atualizar_etapa("✅ Processamento concluído", total_transacoes, total_transacoes or 1)
 
     return linhas_planilha, contagem
 

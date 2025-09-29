@@ -1,38 +1,49 @@
+from __future__ import annotations
+
+from datetime import date
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from datetime import date
-from typing import Optional, Sequence
+
+# ajuste o import conforme onde você salvou o helper
 from services.mapeamento import load_skus_info
+
 from app.services.coleta_vendas_produtos import iniciar_coleta_vendas_produtos
 
-router = APIRouter()
+router = APIRouter(prefix="/produtos", tags=["Produtos"])
+
 
 class ColetaProdutosIn(BaseModel):
     data_ini: date
     data_fim: date
-    nome_produto: Optional[str] = None
-    transportadoras_permitidas: Sequence[str] = ()
+    nome_produto: str | None = None
+
 
 class ColetaProdutosOut(BaseModel):
     modo: str
     inicio: str
     fim: str
     produtos_ids: list[str]
-    transportadoras_permitidas: list[str]
 
-@router.post("/coletas/vendas-produtos", response_model=ColetaProdutosOut)
-def iniciar(req: ColetaProdutosIn):
+
+@router.post("/coletar", response_model=ColetaProdutosOut)
+def coletar_produtos(req: ColetaProdutosIn) -> ColetaProdutosOut:
     try:
-        # TODO: skus_info deve vir do seu domínio/repositorio
-        skus_info = load_skus_info()  
+        skus_info = load_skus_info()  # carrega do skus.json (ou fonte real do domínio)
 
         payload = iniciar_coleta_vendas_produtos(
             data_ini=req.data_ini,
             data_fim=req.data_fim,
             nome_produto=req.nome_produto,
             skus_info=skus_info,
-            transportadoras_permitidas=req.transportadoras_permitidas,
         )
-        return payload
+
+        # filtra para o shape do response_model
+        return ColetaProdutosOut(
+            modo=payload["modo"],
+            inicio=payload["inicio"],
+            fim=payload["fim"],
+            produtos_ids=payload["produtos_ids"],
+        )
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=f"Falha ao iniciar coleta de produtos: {e}")

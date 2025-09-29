@@ -14,16 +14,16 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, Protocol, TypedDict, cast
-from services.datetime_utils import UTC, _to_dt
+from utils.datetime_helpers import UTC, _to_dt
 
 from dateutil.parser import parse as parse_date
-from mapeamento import produto_indisponivel
+from app.services.loader_produtos_info import produto_indisponivel
 
 # terceiros
 from unidecode import unidecode
 
 from app.services.coleta_guru import LIMITE_INFERIOR, coletar_vendas_com_retry, dividir_periodos_coleta_api_guru
-from app.services.datetime_utils import (
+from utils.datetime_helpers import (
     _as_dt,
     _fim_bimestre_por_data,
     _first_day_next_month,
@@ -34,7 +34,7 @@ from app.services.datetime_utils import (
 )
 
 # (opcional) correlação p/ logs — importado, mas ainda não usado aqui
-from app.services.logging_utils import get_correlation_id, set_correlation_id  # noqa: F401
+from utils.logging import get_correlation_id, set_correlation_id  # noqa: F401
 
 
 # ============== TIPAGEM AUXILIAR ==============

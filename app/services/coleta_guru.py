@@ -6,9 +6,12 @@ from collections.abc import Mapping
 from typing import Any, cast
 
 import requests
+from coleta_vendas_assinaturas import gerenciar_coleta_vendas_assinaturas
+from coleta_vendas_produtos import coletar_vendas_produtos
+from planilha_bling import montar_planilha_vendas_guru
 from requests import Response, Session
 
-from app.services.datetime_utils import _as_dt
+from utils.datetime_helpers import _as_dt
 from common.settings import settings
 
 UTC = dt.UTC
@@ -30,6 +33,7 @@ class TransientPageError(Exception):
     def __init__(self, last_exc: Exception | None):
         super().__init__(str(last_exc) if last_exc else "Falha ao buscar página")
         self.last_exc = last_exc
+
 
 def dividir_periodos_coleta_api_guru(
     data_inicio: str | dt.date | dt.datetime,
@@ -87,9 +91,7 @@ def _fetch_page_with_retry(
     last_exc: Exception | None = None
     for tentativa in range(max_page_retries + 1):
         try:
-            r: Response = session.get(
-                f"{base_url}/transactions", headers=headers, params=params, timeout=timeout
-            )
+            r: Response = session.get(f"{base_url}/transactions", headers=headers, params=params, timeout=timeout)
             if r.status_code != 200:
                 raise requests.HTTPError(f"HTTP {r.status_code}")
             return cast(Mapping[str, Any], r.json())
@@ -147,9 +149,7 @@ def coletar_vendas(
         except TransientPageError as e:
             # se falhou logo na 1ª página e nada coletado → propaga erro transitório
             if pagina_count == 0 and total_transacoes == 0:
-                raise TransientGuruError(
-                    f"Falha inicial ao buscar transações do produto {product_id}: {e}"
-                ) from e
+                raise TransientGuruError(f"Falha inicial ao buscar transações do produto {product_id}: {e}") from e
             # senão, encerra com parciais
             erro_final = True
             break
@@ -170,8 +170,11 @@ def coletar_vendas(
             break
 
     status = "Concluído" if not erro_final else "Concluído (parcial)"
-    print(f"[✅ coletar_vendas] {status} - Produto {product_id} | Total: {total_transacoes} transações em {pagina_count} página(s)")
+    print(
+        f"[✅ coletar_vendas] {status} - Produto {product_id} | Total: {total_transacoes} transações em {pagina_count} página(s)"
+    )
     return resultado
+
 
 def coletar_vendas_com_retry(
     *args: Any,
@@ -191,3 +194,86 @@ def coletar_vendas_com_retry(
                 print("[❌] Falhou após retries; retornando vazio.")
                 return []
     return []
+
+
+def executar_worker_guru(
+    dados: Mapping[str, Any],
+    *,
+    skus_info: Any,
+    logger: Any | None = None,
+) -> tuple[list[Any], dict[str, Any]]:
+    """
+    Versão backend pura (sem UI, sem QThread, sem estado/cancelador):
+    executa o fluxo que antes ficava em WorkerThreadGuru.run().
+
+    Parâmetros:
+      - dados: payload com 'modo' ('assinaturas' | 'produtos') e parâmetros da coleta
+      - skus_info: mapeamento SKUs
+
+    Retorna:
+      (novas_linhas, contagem)
+    """
+    if logger is None:
+
+        class _NullLogger:
+            def info(self, *a, **k):
+                pass
+
+            def warning(self, *a, **k):
+                pass
+
+            def exception(self, *a, **k):
+                pass
+
+        logger = _NullLogger()
+
+    novas_linhas: list[Any] = []
+    contagem: dict[str, Any] = {}
+
+    try:
+        modo = (cast(str, dados.get("modo") or "assinaturas")).strip().lower()
+        logger.info("worker_started", extra={"modo": modo})
+
+        # --- Busca transações (backend puro) ---
+        if modo == "assinaturas":
+            # ✅ passa skus_info exigido pela função
+            transacoes, _, dados_final_map = gerenciar_coleta_vendas_assinaturas(
+                cast(dict[str, Any], dict(dados)),
+                skus_info=skus_info,
+            )
+        elif modo == "produtos":
+            transacoes, _, dados_final_map = coletar_vendas_produtos(  # ajuste se sua assinatura exigir skus_info
+                cast(dict[str, Any], dict(dados))
+            )
+        else:
+            raise ValueError(f"Modo de busca desconhecido: {modo}")
+
+        if not isinstance(dados_final_map, Mapping):
+            raise ValueError("Dados inválidos retornados da busca.")
+        dados_final: dict[str, Any] = dict(dados_final_map)
+
+        if not isinstance(transacoes, list) or not isinstance(dados_final, dict):
+            raise ValueError("Dados inválidos retornados da busca.")
+
+        logger.info("worker_received_transactions", extra={"qtd": len(transacoes), "modo": modo})
+
+        # --- Montagem da planilha/linhas (backend puro) ---
+        novas_linhas, contagem_map = montar_planilha_vendas_guru(
+            transacoes=transacoes,
+            dados=dados_final,
+            skus_info=skus_info,
+        )
+
+        if not isinstance(contagem_map, Mapping):
+            raise ValueError("Retorno inválido de montar_planilha_vendas_guru (esperado Mapping).")
+        contagem = dict(contagem_map)
+
+        logger.info("worker_success", extra={"linhas_adicionadas": len(novas_linhas)})
+
+    except Exception as e:
+        logger.exception("worker_error", extra={"err": str(e)})
+        raise
+    finally:
+        logger.info("worker_finished")
+
+    return novas_linhas, contagem
