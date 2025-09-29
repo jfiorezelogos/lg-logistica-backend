@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta, time as dtime, UTC
+from datetime import UTC, date, datetime, time as dtime, timedelta
 
 
 # ============== FUNÇÕES DE PERÍODO / DATA ==============
@@ -24,10 +24,12 @@ def _last_moment_of_month(y: int, m: int) -> datetime:
     nxt = datetime(y, m + 1, 1, tzinfo=UTC)
     return nxt - timedelta(microseconds=1)
 
+
 def _first_day_next_month(dt: datetime) -> datetime:
     dt = _aware_utc(dt)
     y, m = dt.year, dt.month
     return datetime(y + (m // 12), 1 if m == 12 else m + 1, 1, tzinfo=UTC)
+
 
 def _inicio_bimestre_por_data(dt: datetime) -> datetime:
     dt = _aware_utc(dt)

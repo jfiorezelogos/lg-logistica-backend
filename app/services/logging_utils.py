@@ -1,11 +1,10 @@
 # app/services/logging_utils.py
-import uuid
 import contextvars
+import uuid
 
 # ContextVar global para guardar o correlation_id
-correlation_id_ctx: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "correlation_id", default=""
-)
+correlation_id_ctx: contextvars.ContextVar[str] = contextvars.ContextVar("correlation_id", default="")
+
 
 def set_correlation_id(value: str | None = None) -> str:
     """
@@ -15,6 +14,7 @@ def set_correlation_id(value: str | None = None) -> str:
     cid = value or str(uuid.uuid4())
     correlation_id_ctx.set(cid)
     return cid
+
 
 def get_correlation_id() -> str:
     """

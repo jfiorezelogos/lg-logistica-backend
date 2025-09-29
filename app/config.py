@@ -1,12 +1,12 @@
 from functools import lru_cache
 from pathlib import Path
+
 from pydantic import BaseSettings, Field
 
 
 class Settings(BaseSettings):
     timezone: str = Field("America/Sao_Paulo", env="TZ")
     regras_path: str = Field("app/config_ofertas.json", env="REGRAS_PATH")
-
 
     class Config:
         env_file = ".env"

@@ -1,33 +1,36 @@
-from typing import Any, Optional
+import json
+from functools import lru_cache
+from pathlib import Path
+from typing import Any
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-from pathlib import Path
-from functools import lru_cache
-import json
-import io
 
 from app.services.assinaturas import (
-    montar_payload_busca_assinaturas,
     gerenciar_coleta_vendas_assinaturas,
-    montar_planilha_vendas_guru
+    montar_payload_busca_assinaturas,
+    montar_planilha_vendas_guru,
 )
 
 router = APIRouter(prefix="/assinaturas", tags=["Assinaturas"])
 
 # --- caminhos (ajuste se necessário) ---
 BASE_DIR = Path(__file__).resolve().parents[2]  # raiz do projeto
-SKUS_PATH = BASE_DIR / "skus.json"              # skus.json na raiz
-CFG_PATH  = BASE_DIR / "config_ofertas.json"    # config_ofertas.json na raiz
+SKUS_PATH = BASE_DIR / "skus.json"  # skus.json na raiz
+CFG_PATH = BASE_DIR / "config_ofertas.json"  # config_ofertas.json na raiz
+
 
 @lru_cache(maxsize=1)
 def carregar_skus() -> dict[str, dict[str, Any]]:
-    with io.open(SKUS_PATH, "r", encoding="utf-8") as f:
+    with open(SKUS_PATH, encoding="utf-8") as f:
         return json.load(f)
+
 
 @lru_cache(maxsize=1)
 def carregar_cfg() -> dict[str, Any]:
-    with io.open(CFG_PATH, "r", encoding="utf-8") as f:
+    with open(CFG_PATH, encoding="utf-8") as f:
         return json.load(f)
+
 
 def _normalizar_rules(cfg: dict[str, Any]) -> list[dict[str, Any]]:
     """Garante que devolvemos uma lista de regras (suporta 'rules' e legado 'regras')."""
@@ -35,6 +38,7 @@ def _normalizar_rules(cfg: dict[str, Any]) -> list[dict[str, Any]]:
     if r is None:
         r = cfg.get("regras")
     return r if isinstance(r, list) else []
+
 
 def montar_ofertas_embutidas(cfg: dict[str, Any]) -> dict[str, str]:
     """
@@ -63,6 +67,7 @@ def montar_ofertas_embutidas(cfg: dict[str, Any]) -> dict[str, str]:
         if nome:
             mapa[oferta_id] = nome
     return mapa
+
 
 def montar_mapas_cupons(cfg: dict[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
     """
@@ -101,17 +106,20 @@ def montar_mapas_cupons(cfg: dict[str, Any]) -> tuple[dict[str, str], dict[str, 
 
     return cupons_cdf, cupons_bi_mens
 
+
 # ---- Schemas do endpoint (sem skus/rules no input) ----
 class BuscarAssinaturasIn(BaseModel):
     ano: int = Field(..., ge=1900, le=2100)
     mes: int = Field(..., ge=1, le=12)
-    modo_periodo: str                      # "PERÍODO" | "TODAS" (aceita "PERIODO")
-    box_nome: Optional[str] = None
-    periodicidade: str                     # "mensal" | "bimestral"
+    modo_periodo: str  # "PERÍODO" | "TODAS" (aceita "PERIODO")
+    box_nome: str | None = None
+    periodicidade: str  # "mensal" | "bimestral"
+
 
 class ColetaOut(BaseModel):
     linhas: list[dict[str, Any]]
     contagem: dict[str, dict[str, int]]
+
 
 @router.post("/coletar", response_model=ColetaOut)
 def coletar_assinaturas(in_: BuscarAssinaturasIn) -> ColetaOut:
@@ -134,7 +142,7 @@ def coletar_assinaturas(in_: BuscarAssinaturasIn) -> ColetaOut:
         )
 
         # 3) injeta tudo que o service usa
-        dados["rules"] = _normalizar_rules(cfg)                 # regras no payload
+        dados["rules"] = _normalizar_rules(cfg)  # regras no payload
         dados["ofertas_embutidas"] = ofertas_embutidas
         dados["cupons_personalizados_cdf"] = cupons_cdf
         dados["cupons_personalizados_bi_mens"] = cupons_bi_mens
