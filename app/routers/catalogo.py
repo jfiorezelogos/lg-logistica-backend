@@ -3,23 +3,60 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from app.schemas.skus_service import AssinaturaIn, ComboIn, ProdutoIn, SKUsPayload
-from app.services.skus_service import (
-    carregar_skus,
-    gerar_chave_assinatura,
-    salvar_skus,
+from app.services.catalogo import (
+    carregar_skus, salvar_skus, gerar_chave_assinatura,
+)
+from app.schemas.catalogo import (
+    SKUsPayload,
+    ProdutoPatch, ComboPatch, IdStrIn, IdIntIn,  # se você já usa
+    ItemCreate, AssinaturaPatch
 )
 
-router = APIRouter(prefix="/catalogo/skus", tags=["Catálogo / SKUs"])
+router = APIRouter(prefix="/catalogo", tags=["Catálogo / SKUs"])
 
 
-# ======== Endpoints básicos ========
+# =========================
+# Helpers internos
+# =========================
 
+def _assert_sku_unico(skus: dict[str, dict[str, Any]], sku: str, nome_atual: str | None = None) -> None:
+    iguais = [
+        n for n, info in skus.items()
+        if str(info.get("sku") or "") == sku and (nome_atual is None or n != nome_atual)
+    ]
+    if iguais:
+        raise HTTPException(
+            status_code=409,
+            detail={"erro": "duplicidade_sku", "mensagem": "SKU já existe em outro item.", "nomes": iguais},
+        )
+
+
+def _resolver_por_sku(skus: dict[str, dict[str, Any]], sku: str) -> tuple[str, dict[str, Any]]:
+    hits = [(nome, info) for nome, info in skus.items() if str(info.get("sku") or "") == sku]
+    if not hits:
+        raise HTTPException(status_code=404, detail="Item não encontrado por SKU")
+    if len(hits) > 1:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "erro": "duplicidade_sku",
+                "mensagem": "Há mais de um item com esse SKU. Ajuste o catálogo para ter SKUs únicos.",
+                "nomes_afetados": [n for n, _ in hits],
+            },
+        )
+    return hits[0]
+
+
+# =========================
+# Endpoints básicos
+# =========================
 
 @router.get(
-    "/", summary="Listar SKUs (arquivo completo)", description="Retorna o conteúdo do `skus.json` como dict nome→info."
+    "/",
+    summary="Listar SKUs (arquivo completo)",
+    description="Retorna o conteúdo do `skus.json` como dict nome→info (formato atual do arquivo)."
 )
 def listar_skus() -> dict[str, dict[str, Any]]:
     try:
@@ -42,107 +79,253 @@ def substituir_skus(body: SKUsPayload) -> dict[str, dict[str, Any]]:
         raise HTTPException(status_code=500, detail=f"Falha ao salvar SKUs: {e}")
 
 
-# ======== Upserts ========
-
-
-@router.post(
-    "/produto",
-    summary="Upsert de produto simples",
-    description="Cria ou atualiza um **produto** (tipo='produto'). A chave é o `nome`.",
-)
-def upsert_produto(prod: ProdutoIn) -> dict[str, dict[str, Any]]:
-    try:
-        skus = carregar_skus()
-        skus[prod.nome] = {
-            "sku": prod.sku,
-            "peso": prod.peso,
-            "guru_ids": prod.guru_ids,
-            "shopify_ids": prod.shopify_ids,
-            "tipo": "produto",
-            "composto_de": [],
-            "indisponivel": prod.indisponivel,
-        }
-        if prod.preco_fallback is not None:
-            skus[prod.nome]["preco_fallback"] = prod.preco_fallback
-        salvar_skus(skus)
-        return skus
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Falha no upsert do produto: {e}")
-
+# ==============
+# CREATE (POST)
+# ==============
 
 @router.post(
-    "/assinatura",
-    summary="Upsert de assinatura",
-    description="Cria ou atualiza uma **assinatura** (tipo='assinatura'). A chave é `nome_base - periodicidade`.",
+    "/{sku}",
+    summary="Criar item por SKU (produto | combo | assinatura)",
+    description=(
+        "Cria um item identificado por `sku`. Se já existir um item com esse SKU, retorna 409.\n"
+        "- `tipo='produto'`: ignora `composto_de`.\n"
+        "- `tipo='combo'`: exige `composto_de` (lista de SKUs).\n"
+        "- `tipo='assinatura'`: exige `recorrencia` e `periodicidade` ('mensal' | 'bimestral')."
+    ),
 )
-def upsert_assinatura(assin: AssinaturaIn) -> dict[str, dict[str, Any]]:
+def criar_item_por_sku(sku: str, body: ItemCreate) -> dict[str, dict[str, Any]]:
+    sku = (sku or "").strip()
+    if not sku:
+        raise HTTPException(status_code=422, detail="SKU obrigatório")
     try:
         skus = carregar_skus()
-        key = gerar_chave_assinatura(assin.nome_base, assin.periodicidade)
-        skus[key] = {
-            "tipo": "assinatura",
-            "recorrencia": (assin.recorrencia or "").strip(),
-            "periodicidade": assin.periodicidade,
-            "guru_ids": assin.guru_ids,
-            "shopify_ids": [],
-            "composto_de": [],
-            "sku": "",
-            "peso": 0.0,
-            "indisponivel": assin.indisponivel,
+
+        # 409 se já houver esse SKU
+        existentes = [n for n, i in skus.items() if str(i.get("sku") or "") == sku]
+        if existentes:
+            raise HTTPException(
+                status_code=409,
+                detail={"erro": "sku_existente", "mensagem": "Já existe item com esse SKU.", "nomes": existentes},
+            )
+
+        info: dict[str, Any] = {
+            "sku": sku,
+            "peso": body.peso,
+            "guru_ids": body.guru_ids,
+            "shopify_ids": body.shopify_ids,
+            "indisponivel": body.indisponivel,
         }
-        if assin.preco_fallback is not None:
-            skus[key]["preco_fallback"] = assin.preco_fallback
+
+        if body.tipo == "produto":
+            info.update({"tipo": "produto", "composto_de": []})
+        elif body.tipo == "combo":
+            info.update({"tipo": "combo", "composto_de": body.composto_de})
+        else:  # assinatura
+            info.update({
+                "tipo": "assinatura",
+                "recorrencia": body.recorrencia,
+                "periodicidade": body.periodicidade,
+                "composto_de": [],   # por consistência no arquivo
+            })
+
+        if body.preco_fallback is not None:
+            info["preco_fallback"] = body.preco_fallback
+
+        nome_key = (body.nome or "").strip()
+        if not nome_key:
+            raise HTTPException(status_code=422, detail="Nome obrigatório")
+
+        _assert_sku_unico(skus, sku, nome_atual=None)
+        skus[nome_key] = info
         salvar_skus(skus)
         return skus
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Falha no upsert da assinatura: {e}")
+        raise HTTPException(status_code=500, detail=f"Falha ao criar item por SKU: {e}")
 
 
-@router.post(
-    "/combo", summary="Upsert de combo", description="Cria ou atualiza um **combo** (tipo='combo'). A chave é o `nome`."
-)
-def upsert_combo(combo: ComboIn) -> dict[str, dict[str, Any]]:
-    try:
-        skus = carregar_skus()
-        skus[combo.nome] = {
-            "sku": combo.sku,
-            "peso": 0.0,
-            "tipo": "combo",
-            "composto_de": combo.composto_de,
-            "guru_ids": combo.guru_ids,
-            "shopify_ids": combo.shopify_ids,
-            "indisponivel": combo.indisponivel,
-        }
-        if combo.preco_fallback is not None:
-            skus[combo.nome]["preco_fallback"] = combo.preco_fallback
-        salvar_skus(skus)
-        return skus
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Falha no upsert do combo: {e}")
-
-
-# ======== Remoção ========
-
-
-class DeleteBody(BaseModel):
-    nome: str
-
+# =========================
+# Remoção (APENAS por SKU)
+# =========================
 
 @router.delete(
-    "/",
-    summary="Remover item por nome",
-    description="Remove um item (produto/assinatura/combo) pela **chave do dicionário** (nome).",
+    "/{sku}",
+    summary="Remover item por SKU",
+    description=(
+        "Remove um item (produto/combo) procurando pelo campo `sku`. "
+        "Se houver mais de um item com o mesmo SKU, retorna 409 (duplicidade). "
+        "Assinaturas normalmente têm `sku=''` e não são elegíveis por este endpoint."
+    ),
+    response_model=dict[str, dict[str, Any]],
 )
-def remover_item(body: DeleteBody) -> dict[str, dict[str, Any]]:
+def remover_item_por_sku(sku: str) -> dict[str, dict[str, Any]]:
     try:
+        sku = (sku or "").strip()
+        if not sku:
+            raise HTTPException(status_code=422, detail="SKU inválido")
+
         skus = carregar_skus()
-        nome = (body.nome or "").strip()
-        if not nome or nome not in skus:
-            raise HTTPException(status_code=404, detail="Item não encontrado")
+        nome, _ = _resolver_por_sku(skus, sku)
+
         del skus[nome]
         salvar_skus(skus)
         return skus
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Falha ao remover item: {e}")
+        raise HTTPException(status_code=500, detail=f"Falha ao remover por SKU: {e}")
+
+
+# =========================
+# Disponibilidade (APENAS por SKU)
+# =========================
+
+class IndisponibilidadeIn(BaseModel):
+    indisponivel: bool
+
+
+@router.patch(
+    "/{sku}/indisponivel",
+    summary="Marcar indisponibilidade por SKU",
+    description="Procura o item pelo campo `sku` e define `indisponivel`."
+)
+def set_indisponivel_por_sku(sku: str, body: IndisponibilidadeIn) -> dict[str, Any]:
+    try:
+        sku = (sku or "").strip()
+        if not sku:
+            raise HTTPException(status_code=422, detail="SKU inválido")
+
+        skus = carregar_skus()
+        nome, info = _resolver_por_sku(skus, sku)
+
+        info["indisponivel"] = bool(body.indisponivel)
+        salvar_skus(skus)
+        return {"nome": nome, **info}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Falha ao marcar indisponível por SKU: {e}")
+
+
+# =========================
+# PATCH parcial (merge) por SKU
+# =========================
+
+@router.patch(
+    "/{sku}",
+    summary="Patch parcial por SKU (merge)",
+    description=(
+        "Atualiza parcialmente os campos do item identificado pelo `sku`. "
+        "produto → ProdutoPatch | combo → ComboPatch | assinatura → AssinaturaPatch."
+    ),
+)
+def patch_por_sku(sku: str, body: dict[str, Any]) -> dict[str, Any]:
+    try:
+        sku = (sku or "").strip()
+        if not sku:
+            raise HTTPException(status_code=422, detail="SKU inválido")
+
+        skus = carregar_skus()
+        nome, info = _resolver_por_sku(skus, sku)
+
+        tipo = str(info.get("tipo") or "produto")
+        if tipo == "combo":
+            patch = ComboPatch.model_validate(body)
+        elif tipo == "assinatura":
+            patch = AssinaturaPatch.model_validate(body)
+        else:
+            patch = ProdutoPatch.model_validate(body)
+
+        data = patch.model_dump(exclude_unset=True)
+        for k, v in data.items():
+            info[k] = v
+
+        salvar_skus(skus)
+        return {"nome": nome, **info}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Falha no patch por SKU: {e}")
+
+
+# =========================
+# Endpoints atômicos para IDs (Guru/Shopify)
+# =========================
+
+@router.post(
+    "/{sku}/gid",
+    summary="Adicionar um Guru ID ao item (por SKU)",
+)
+def add_guru_id(sku: str, body: IdStrIn) -> dict[str, Any]:
+    skus = carregar_skus()
+    nome, info = _resolver_por_sku(skus, (sku or "").strip())
+    ids = list(info.get("guru_ids") or [])
+    if body.id not in ids:
+        ids.append(body.id)
+        info["guru_ids"] = ids
+        salvar_skus(skus)
+    return {"nome": nome, **info}
+
+
+@router.delete(
+    "/{sku}/{gid}",
+    summary="Remover um Guru ID do item (por SKU)",
+)
+def remove_guru_id(sku: str, gid: str) -> dict[str, Any]:
+    skus = carregar_skus()
+    nome, info = _resolver_por_sku(skus, (sku or "").strip())
+    info["guru_ids"] = [x for x in (info.get("guru_ids") or []) if x != gid]
+    salvar_skus(skus)
+    return {"nome": nome, **info}
+
+
+@router.post(
+    "/{sku}/sid",
+    summary="Adicionar um Shopify ID ao item (por SKU)",
+)
+def add_shopify_id(sku: str, body: IdIntIn) -> dict[str, Any]:
+    skus = carregar_skus()
+    nome, info = _resolver_por_sku(skus, (sku or "").strip())
+    ids = list(info.get("shopify_ids") or [])
+    if body.id not in ids:
+        ids.append(body.id)
+        info["shopify_ids"] = ids
+        salvar_skus(skus)
+    return {"nome": nome, **info}
+
+
+@router.delete(
+    "/{sku}/{sid}",
+    summary="Remover um Shopify ID do item (por SKU)",
+)
+def remove_shopify_id(sku: str, sid: int) -> dict[str, Any]:
+    skus = carregar_skus()
+    nome, info = _resolver_por_sku(skus, (sku or "").strip())
+    info["shopify_ids"] = [x for x in (info.get("shopify_ids") or []) if int(x) == int(x) and x != sid]
+    salvar_skus(skus)
+    return {"nome": nome, **info}
+
+
+# =========================
+# Consulta (APENAS por SKU)
+# =========================
+
+@router.get(
+    "/{sku}",
+    summary="Obter item por SKU",
+    description="Retorna o item (produto/combo) cujo `sku` coincida (assinaturas normalmente não têm SKU)."
+)
+def obter_por_sku(sku: str) -> dict[str, Any]:
+    try:
+        sku = (sku or "").strip()
+        if not sku:
+            raise HTTPException(status_code=422, detail="SKU inválido")
+
+        skus = carregar_skus()
+        nome, info = _resolver_por_sku(skus, sku)
+        return {"nome": nome, **info}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Falha ao obter item por SKU: {e}")

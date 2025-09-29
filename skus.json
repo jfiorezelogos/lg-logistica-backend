@@ -224,7 +224,7 @@
         "composto_de": [],
         "indisponivel": true
     },
-    "Assinatura Anual (mensal) — mensal - mensal": {
+    "Assinatura Anual (mensal)": {
         "tipo": "assinatura",
         "recorrencia": "anual",
         "periodicidade": "mensal",
@@ -234,11 +234,11 @@
         ],
         "shopify_ids": [],
         "composto_de": [],
-        "sku": "",
+        "sku": "ASS01A-MES",
         "peso": 0.0,
         "indisponivel": false
     },
-    "Assinatura Anual (bimestral) — bimestral - bimestral": {
+    "Assinatura Anual (bimestral)": {
         "tipo": "assinatura",
         "recorrencia": "anual",
         "periodicidade": "bimestral",
@@ -248,11 +248,11 @@
         ],
         "shopify_ids": [],
         "composto_de": [],
-        "sku": "",
+        "sku": "ASS01A-BIM",
         "peso": 0.0,
         "indisponivel": false
     },
-    "Assinatura 2 anos (bimestral) — bimestral - bimestral": {
+    "Assinatura 2 anos (bimestral)": {
         "tipo": "assinatura",
         "recorrencia": "bianual",
         "periodicidade": "bimestral",
@@ -262,11 +262,11 @@
         ],
         "shopify_ids": [],
         "composto_de": [],
-        "sku": "",
+        "sku": "ASS02A-BIM",
         "peso": 0.0,
         "indisponivel": false
     },
-    "Assinatura 2 anos (mensal) — mensal - mensal": {
+    "Assinatura 2 anos (mensal)": {
         "tipo": "assinatura",
         "recorrencia": "bianual",
         "periodicidade": "mensal",
@@ -276,11 +276,11 @@
         ],
         "shopify_ids": [],
         "composto_de": [],
-        "sku": "",
+        "sku": "ASS02A-MES",
         "peso": 0.0,
         "indisponivel": false
     },
-    "Assinatura 3 anos (bimestral) — bimestral - bimestral": {
+    "Assinatura 3 anos (bimestral)": {
         "tipo": "assinatura",
         "recorrencia": "trianual",
         "periodicidade": "bimestral",
@@ -290,11 +290,11 @@
         ],
         "shopify_ids": [],
         "composto_de": [],
-        "sku": "",
+        "sku": "ASS03A-BIM",
         "peso": 0.0,
         "indisponivel": false
     },
-    "Assinatura 3 anos (mensal) — mensal - mensal": {
+    "Assinatura 3 anos (mensal)": {
         "tipo": "assinatura",
         "recorrencia": "trianual",
         "periodicidade": "mensal",
@@ -304,11 +304,11 @@
         ],
         "shopify_ids": [],
         "composto_de": [],
-        "sku": "",
+        "sku": "ASS03A-MES",
         "peso": 0.0,
         "indisponivel": false
     },
-    "Assinatura Bimestral (bimestral) — bimestral - bimestral": {
+    "Assinatura Bimestral (bimestral)": {
         "tipo": "assinatura",
         "recorrencia": "bimestral",
         "periodicidade": "bimestral",
@@ -318,11 +318,11 @@
         ],
         "shopify_ids": [],
         "composto_de": [],
-        "sku": "",
+        "sku": "ASS01B",
         "peso": 0.0,
         "indisponivel": false
     },
-    "Assinatura Mensal (mensal) — mensal - mensal": {
+    "Assinatura Mensal (mensal)": {
         "tipo": "assinatura",
         "recorrencia": "mensal",
         "periodicidade": "mensal",
@@ -332,7 +332,7 @@
         ],
         "shopify_ids": [],
         "composto_de": [],
-        "sku": "",
+        "sku": "ASS01M",
         "peso": 0.0,
         "indisponivel": false
     },

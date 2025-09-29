@@ -200,18 +200,6 @@ def get_logger(name: str | None = None) -> logging.Logger:
     return logging.getLogger(name or "lglog")
 
 
-# common/logging_setup.py  (trechos novos/alterados)
-
-from __future__ import annotations
-
-import logging
-from contextvars import ContextVar
-
-from pythonjsonlogger import jsonlogger
-
-# ... (restante do arquivo COMO ESTÁ) ...
-
-
 # ---------------------------
 # Captura opcional de stdout/stderr
 # ---------------------------
