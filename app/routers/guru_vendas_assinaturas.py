@@ -4,11 +4,10 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
-
 from pydantic import BaseModel
 
-from app.services.guru_worker_coleta import executar_worker_guru
 from app.services.guru_vendas_assinaturas import montar_payload_busca_assinaturas
+from app.services.guru_worker_coleta import executar_worker_guru
 from app.services.loader_main import carregar_cfg, carregar_skus
 from app.services.loader_regras_assinaturas import (
     montar_mapas_cupons,

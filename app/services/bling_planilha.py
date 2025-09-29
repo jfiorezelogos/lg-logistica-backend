@@ -2,12 +2,17 @@ import datetime as dt
 import traceback
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
-from typing import Any, TypedDict, cast, Dict, List
-from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from typing import Any, TypedDict, cast
 
 import pandas as pd
-from app.services.guru_vendas_assinaturas import AplicarRegrasAssinaturas, aplicar_regras_assinaturas, validar_regras_assinatura
 from dateutil.parser import parse as parse_date
+
+from app.services.guru_vendas_assinaturas import (
+    AplicarRegrasAssinaturas,
+    aplicar_regras_assinaturas,
+    validar_regras_assinatura,
+)
 from app.services.loader_produtos_info import SKUInfo, SKUs, produto_indisponivel
 
 UTC = dt.UTC
@@ -156,6 +161,7 @@ def gerar_linha_base_planilha(
         "indisponivel": "",
     }
 
+
 def desmembrar_combo_planilha(
     valores: Mapping[str, Any],
     linha_base: dict[str, Any],
@@ -178,8 +184,8 @@ def desmembrar_combo_planilha(
     skus_componentes: list[str] = [str(s).strip() for s in comp_raw if str(s).strip()]
 
     # Mapa auxiliares para lookup O(1)
-    sku_to_nome: Dict[str, str] = {}
-    nome_to_sku: Dict[str, str] = {}
+    sku_to_nome: dict[str, str] = {}
+    nome_to_sku: dict[str, str] = {}
     for nome, info in skus_info.items():
         sku = str(info.get("sku", "") or "").strip()
         if sku:
@@ -213,11 +219,11 @@ def desmembrar_combo_planilha(
 
     # Resolve (nome_item, sku_item) para cada componente.
     # A lista "composto_de" pode conter SKU ou, eventualmente, nomes.
-    itens_resolvidos: List[tuple[str, str]] = []
+    itens_resolvidos: list[tuple[str, str]] = []
     for comp in skus_componentes:
-        if comp in sku_to_nome:            # comp é SKU conhecido
+        if comp in sku_to_nome:  # comp é SKU conhecido
             itens_resolvidos.append((sku_to_nome[comp], comp))
-        elif comp in nome_to_sku:          # comp é nome conhecido
+        elif comp in nome_to_sku:  # comp é nome conhecido
             itens_resolvidos.append((comp, nome_to_sku[comp]))
         else:
             # fallback: mantém comp como SKU e nome = comp
@@ -261,6 +267,7 @@ def desmembrar_combo_planilha(
         linhas.append(nova)
 
     return linhas
+
 
 def montar_planilha_vendas_guru(
     transacoes: Sequence[Mapping[str, Any] | Sequence[Mapping[str, Any]]],
@@ -445,6 +452,7 @@ def montar_planilha_vendas_guru(
                 transacoes_por_assinatura[str(sid)].append(trans)
 
     for subscription_id, grupo_transacoes in transacoes_por_assinatura.items():
+
         def safe_parse_date(t: Mapping[str, Any]) -> dt.datetime:
             try:
                 s = str(t.get("ordered_at") or t.get("created_at") or "1900-01-01")
@@ -552,7 +560,7 @@ def montar_planilha_vendas_guru(
                 valores["brindes_extras"] = []
 
             # brindes extras
-            for br in (valores.get("brindes_extras") or []):
+            for br in valores.get("brindes_extras") or []:
                 brinde_nome = str(br.get("nome", "")).strip() if isinstance(br, Mapping) else str(br).strip()
                 if not brinde_nome:
                     continue
@@ -626,6 +634,7 @@ def montar_planilha_vendas_guru(
         df_novas["indisponivel"] = [""] * len(df_novas)
 
     return linhas_planilha, contagem
+
 
 class MapPedido(TypedDict):
     transaction_id: str

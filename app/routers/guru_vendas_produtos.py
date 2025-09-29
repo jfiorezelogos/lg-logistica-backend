@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Optional, Any
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from app.services.loader_produtos_info import load_skus_info
 from app.services.guru_vendas_produtos import iniciar_coleta_vendas_produtos
 from app.services.guru_worker_coleta import executar_worker_guru
+from app.services.loader_produtos_info import load_skus_info
 
 router = APIRouter(prefix="/guru/vendas", tags=["Produtos"])
 
@@ -22,7 +22,7 @@ class ColetaOut(BaseModel):
 def coletar_vendas_produtos(
     data_ini: date = Query(..., description="Data inicial (YYYY-MM-DD)"),
     data_fim: date = Query(..., description="Data final (YYYY-MM-DD)"),
-    nome_produto: Optional[str] = Query(None, description="Nome do produto ou vazio para todos"),
+    nome_produto: str | None = Query(None, description="Nome do produto ou vazio para todos"),
 ) -> ColetaOut:
     try:
         # 1) carregar SKUs

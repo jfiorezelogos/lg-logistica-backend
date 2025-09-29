@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -16,6 +16,7 @@ class ItemCreate(BaseModel):
       - combo:   exige `composto_de` (lista de SKUs componentes)
       - assinatura: exige `recorrencia` e `periodicidade` ('mensal' | 'bimestral')
     """
+
     tipo: TipoItem = Field(..., description="Tipo do item: 'produto' | 'combo' | 'assinatura'")
     nome: str = Field(..., description="Nome (chave no arquivo; usado apenas no armazenamento)")
     peso: float = Field(0.0, ge=0, description="Peso em kg (assinatura geralmente 0.0)")
@@ -50,7 +51,7 @@ class ItemCreate(BaseModel):
         return [int(x) for x in list(v) if str(x).strip().isdigit()]
 
     @model_validator(mode="after")
-    def _require_fields_by_tipo(self) -> "ItemCreate":
+    def _require_fields_by_tipo(self) -> ItemCreate:
         t = (self.tipo or "").strip().lower()
         if t == "combo" and not self.composto_de:
             raise ValueError("Para combo, 'composto_de' é obrigatório (lista de SKUs).")
@@ -68,6 +69,7 @@ class ProdutoIn(BaseModel):
     Item simples do catálogo (não combo, não assinatura).
     A API usa SKU como chave principal.
     """
+
     nome: str = Field(..., description="Nome do item (chave no arquivo `skus.json`).")
     sku: str = Field(..., min_length=1, description="SKU interno do produto (obrigatório e idealmente único).")
     peso: float = Field(0.0, ge=0, description="Peso em kg.")
@@ -107,6 +109,7 @@ class AssinaturaIn(BaseModel):
     """
     Item do tipo 'assinatura' COM SKU (alinhado ao novo modelo).
     """
+
     nome: str = Field(..., description="Nome da assinatura (chave no arquivo).")
     sku: str = Field(..., min_length=1, description="SKU interno da assinatura (obrigatório e idealmente único).")
     recorrencia: str = Field("", description="anual | bianual | trianual | mensal | bimestral")
@@ -155,6 +158,7 @@ class ComboIn(BaseModel):
     """
     Combo (conjunto de SKUs). A API trabalha por SKU.
     """
+
     nome: str = Field(..., description="Nome do combo (chave no arquivo `skus.json`).")
     sku: str = Field(..., min_length=1, description="SKU interno do combo (obrigatório e idealmente único).")
     composto_de: list[str] = Field(default_factory=list, description="Lista de SKUs componentes do combo.")
@@ -196,6 +200,7 @@ class SKUsPayload(BaseModel):
     Estrutura completa para substituir todo o `skus.json` via PUT `/catalogo/`.
     O arquivo segue nome→info, mas todos os itens (produto/combo/assinatura) carregam SKU.
     """
+
     skus: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
@@ -203,13 +208,15 @@ class SKUsPayload(BaseModel):
 # PATCHes parciais por SKU
 # =========================
 
+
 class ProdutoPatch(BaseModel):
     """Atualização parcial de um produto (aplica apenas campos enviados)."""
-    peso: Optional[float] = Field(None, ge=0)
-    guru_ids: Optional[list[str]] = None
-    shopify_ids: Optional[list[int]] = None
-    preco_fallback: Optional[float] = Field(None, ge=0)
-    indisponivel: Optional[bool] = None
+
+    peso: float | None = Field(None, ge=0)
+    guru_ids: list[str] | None = None
+    shopify_ids: list[int] | None = None
+    preco_fallback: float | None = Field(None, ge=0)
+    indisponivel: bool | None = None
 
     @field_validator("guru_ids", mode="before")
     @classmethod
@@ -232,13 +239,14 @@ class ProdutoPatch(BaseModel):
 
 class AssinaturaPatch(BaseModel):
     """Atualização parcial de uma assinatura (aplica apenas campos enviados)."""
-    recorrencia: Optional[str] = Field(None, description="anual | bianual | trianual | mensal | bimestral")
-    periodicidade: Optional[str] = Field(None, description="'mensal' | 'bimestral'")
-    guru_ids: Optional[list[str]] = None
-    shopify_ids: Optional[list[int]] = None
-    preco_fallback: Optional[float] = Field(None, ge=0)
-    indisponivel: Optional[bool] = None
-    peso: Optional[float] = Field(None, ge=0)
+
+    recorrencia: str | None = Field(None, description="anual | bianual | trianual | mensal | bimestral")
+    periodicidade: str | None = Field(None, description="'mensal' | 'bimestral'")
+    guru_ids: list[str] | None = None
+    shopify_ids: list[int] | None = None
+    preco_fallback: float | None = Field(None, ge=0)
+    indisponivel: bool | None = None
+    peso: float | None = Field(None, ge=0)
 
     @field_validator("guru_ids", mode="before")
     @classmethod
@@ -260,7 +268,7 @@ class AssinaturaPatch(BaseModel):
 
     @field_validator("periodicidade")
     @classmethod
-    def _chk_per(cls, v: Optional[str]) -> Optional[str]:
+    def _chk_per(cls, v: str | None) -> str | None:
         if v is None:
             return v
         per = (v or "").strip().lower()
@@ -271,12 +279,13 @@ class AssinaturaPatch(BaseModel):
 
 class ComboPatch(BaseModel):
     """Atualização parcial de um combo (aplica apenas campos enviados)."""
-    composto_de: Optional[list[str]] = None
-    guru_ids: Optional[list[str]] = None
-    shopify_ids: Optional[list[int]] = None
-    preco_fallback: Optional[float] = Field(None, ge=0)
-    indisponivel: Optional[bool] = None
-    peso: Optional[float] = Field(None, ge=0)
+
+    composto_de: list[str] | None = None
+    guru_ids: list[str] | None = None
+    shopify_ids: list[int] | None = None
+    preco_fallback: float | None = Field(None, ge=0)
+    indisponivel: bool | None = None
+    peso: float | None = Field(None, ge=0)
 
     @field_validator("composto_de", "guru_ids", mode="before")
     @classmethod
@@ -300,6 +309,7 @@ class ComboPatch(BaseModel):
 # =========================
 # Schemas atômicos (add/remove)
 # =========================
+
 
 class IdStrIn(BaseModel):
     id: str = Field(..., min_length=1, description="ID string para adicionar/remover (ex.: Guru ID)")

@@ -3,15 +3,20 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-from app.services.catalogo import (
-    carregar_skus, salvar_skus, gerar_chave_assinatura,
-)
 from app.schemas.catalogo import (
+    AssinaturaPatch,
+    ComboPatch,
+    IdIntIn,  # se você já usa
+    IdStrIn,
+    ItemCreate,
+    ProdutoPatch,
     SKUsPayload,
-    ProdutoPatch, ComboPatch, IdStrIn, IdIntIn,  # se você já usa
-    ItemCreate, AssinaturaPatch
+)
+from app.services.catalogo import (
+    carregar_skus,
+    salvar_skus,
 )
 
 router = APIRouter(prefix="/catalogo", tags=["Catálogo / SKUs"])
@@ -21,10 +26,10 @@ router = APIRouter(prefix="/catalogo", tags=["Catálogo / SKUs"])
 # Helpers internos
 # =========================
 
+
 def _assert_sku_unico(skus: dict[str, dict[str, Any]], sku: str, nome_atual: str | None = None) -> None:
     iguais = [
-        n for n, info in skus.items()
-        if str(info.get("sku") or "") == sku and (nome_atual is None or n != nome_atual)
+        n for n, info in skus.items() if str(info.get("sku") or "") == sku and (nome_atual is None or n != nome_atual)
     ]
     if iguais:
         raise HTTPException(
@@ -53,10 +58,11 @@ def _resolver_por_sku(skus: dict[str, dict[str, Any]], sku: str) -> tuple[str, d
 # Endpoints básicos
 # =========================
 
+
 @router.get(
     "/",
     summary="Listar SKUs (arquivo completo)",
-    description="Retorna o conteúdo do `skus.json` como dict nome→info (formato atual do arquivo)."
+    description="Retorna o conteúdo do `skus.json` como dict nome→info (formato atual do arquivo).",
 )
 def listar_skus() -> dict[str, dict[str, Any]]:
     try:
@@ -82,6 +88,7 @@ def substituir_skus(body: SKUsPayload) -> dict[str, dict[str, Any]]:
 # ==============
 # CREATE (POST)
 # ==============
+
 
 @router.post(
     "/{sku}",
@@ -121,12 +128,14 @@ def criar_item_por_sku(sku: str, body: ItemCreate) -> dict[str, dict[str, Any]]:
         elif body.tipo == "combo":
             info.update({"tipo": "combo", "composto_de": body.composto_de})
         else:  # assinatura
-            info.update({
-                "tipo": "assinatura",
-                "recorrencia": body.recorrencia,
-                "periodicidade": body.periodicidade,
-                "composto_de": [],   # por consistência no arquivo
-            })
+            info.update(
+                {
+                    "tipo": "assinatura",
+                    "recorrencia": body.recorrencia,
+                    "periodicidade": body.periodicidade,
+                    "composto_de": [],  # por consistência no arquivo
+                }
+            )
 
         if body.preco_fallback is not None:
             info["preco_fallback"] = body.preco_fallback
@@ -148,6 +157,7 @@ def criar_item_por_sku(sku: str, body: ItemCreate) -> dict[str, dict[str, Any]]:
 # =========================
 # Remoção (APENAS por SKU)
 # =========================
+
 
 @router.delete(
     "/{sku}",
@@ -181,6 +191,7 @@ def remover_item_por_sku(sku: str) -> dict[str, dict[str, Any]]:
 # Disponibilidade (APENAS por SKU)
 # =========================
 
+
 class IndisponibilidadeIn(BaseModel):
     indisponivel: bool
 
@@ -188,7 +199,7 @@ class IndisponibilidadeIn(BaseModel):
 @router.patch(
     "/{sku}/indisponivel",
     summary="Marcar indisponibilidade por SKU",
-    description="Procura o item pelo campo `sku` e define `indisponivel`."
+    description="Procura o item pelo campo `sku` e define `indisponivel`.",
 )
 def set_indisponivel_por_sku(sku: str, body: IndisponibilidadeIn) -> dict[str, Any]:
     try:
@@ -211,6 +222,7 @@ def set_indisponivel_por_sku(sku: str, body: IndisponibilidadeIn) -> dict[str, A
 # =========================
 # PATCH parcial (merge) por SKU
 # =========================
+
 
 @router.patch(
     "/{sku}",
@@ -252,6 +264,7 @@ def patch_por_sku(sku: str, body: dict[str, Any]) -> dict[str, Any]:
 # =========================
 # Endpoints atômicos para IDs (Guru/Shopify)
 # =========================
+
 
 @router.post(
     "/{sku}/gid",
@@ -311,10 +324,11 @@ def remove_shopify_id(sku: str, sid: int) -> dict[str, Any]:
 # Consulta (APENAS por SKU)
 # =========================
 
+
 @router.get(
     "/{sku}",
     summary="Obter item por SKU",
-    description="Retorna o item (produto/combo) cujo `sku` coincida (assinaturas normalmente não têm SKU)."
+    description="Retorna o item (produto/combo) cujo `sku` coincida (assinaturas normalmente não têm SKU).",
 )
 def obter_por_sku(sku: str) -> dict[str, Any]:
     try:
