@@ -1,49 +1,45 @@
 from __future__ import annotations
 
 from datetime import date
+from typing import Optional, Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-# ajuste o import conforme onde você salvou o helper
-from services.mapeamento import load_skus_info
-
+from app.services.loader_produtos_info import load_skus_info
 from app.services.coleta_vendas_produtos import iniciar_coleta_vendas_produtos
+from app.services.coleta_guru import executar_worker_guru
 
-router = APIRouter(prefix="/produtos", tags=["Produtos"])
-
-
-class ColetaProdutosIn(BaseModel):
-    data_ini: date
-    data_fim: date
-    nome_produto: str | None = None
+router = APIRouter(prefix="/vendas/guru", tags=["Produtos"])
 
 
-class ColetaProdutosOut(BaseModel):
-    modo: str
-    inicio: str
-    fim: str
-    produtos_ids: list[str]
+class ColetaOut(BaseModel):
+    linhas: list[dict[str, Any]]
+    contagem: dict[str, dict[str, int]]
 
 
-@router.post("/coletar", response_model=ColetaProdutosOut)
-def coletar_produtos(req: ColetaProdutosIn) -> ColetaProdutosOut:
+@router.get("/produtos", response_model=ColetaOut)
+def coletar_vendas_produtos(
+    data_ini: date = Query(..., description="Data inicial (YYYY-MM-DD)"),
+    data_fim: date = Query(..., description="Data final (YYYY-MM-DD)"),
+    nome_produto: Optional[str] = Query(None, description="Nome do produto ou vazio para todos"),
+) -> ColetaOut:
     try:
-        skus_info = load_skus_info()  # carrega do skus.json (ou fonte real do domínio)
+        # 1) carregar SKUs
+        skus_info = load_skus_info()
 
+        # 2) montar payload (inicio/fim/produtos_ids)
         payload = iniciar_coleta_vendas_produtos(
-            data_ini=req.data_ini,
-            data_fim=req.data_fim,
-            nome_produto=req.nome_produto,
+            data_ini=data_ini,
+            data_fim=data_fim,
+            nome_produto=nome_produto,
             skus_info=skus_info,
         )
 
-        # filtra para o shape do response_model
-        return ColetaProdutosOut(
-            modo=payload["modo"],
-            inicio=payload["inicio"],
-            fim=payload["fim"],
-            produtos_ids=payload["produtos_ids"],
-        )
+        # 3) executar coleta de fato (worker unificado)
+        linhas, contagem = executar_worker_guru(payload, skus_info=skus_info)
+
+        return ColetaOut(linhas=linhas, contagem=contagem)
+
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Falha ao iniciar coleta de produtos: {e}")
+        raise HTTPException(status_code=400, detail=f"Falha na coleta de vendas de produtos: {e}")

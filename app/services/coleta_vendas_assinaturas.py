@@ -14,27 +14,26 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, Protocol, TypedDict, cast
-from utils.datetime_helpers import UTC, _to_dt
-
-from dateutil.parser import parse as parse_date
-from app.services.loader_produtos_info import produto_indisponivel
 
 # terceiros
 from unidecode import unidecode
 
-from app.services.coleta_guru import LIMITE_INFERIOR, coletar_vendas_com_retry, dividir_periodos_coleta_api_guru
-from utils.datetime_helpers import (
+from app.services.guru_client import LIMITE_INFERIOR, coletar_vendas_com_retry, dividir_periodos_coleta_api_guru
+from app.services.loader_produtos_info import produto_indisponivel
+from app.utils.datetime_helpers import (
+    UTC,
     _as_dt,
     _fim_bimestre_por_data,
     _first_day_next_month,
     _inicio_bimestre_por_data,
     _inicio_mes_por_data,
     _last_moment_of_month,
+    _to_dt,
     bimestre_do_mes,
 )
 
 # (opcional) correlação p/ logs — importado, mas ainda não usado aqui
-from utils.logging import get_correlation_id, set_correlation_id  # noqa: F401
+from app.utils.logging import get_correlation_id, set_correlation_id  # noqa: F401
 
 
 # ============== TIPAGEM AUXILIAR ==============
@@ -43,6 +42,7 @@ class HasIsSet(Protocol):
 
 
 # ============== CONSTANTES GERAIS ==============
+
 
 def calcular_periodo_assinatura(ano: int, mes: int, periodicidade: str) -> tuple[dt.datetime, dt.datetime, int]:
     periodicidade = (periodicidade or "").strip().lower()

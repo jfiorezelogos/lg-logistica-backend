@@ -1,18 +1,19 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from datetime import date
-from typing import Any, Mapping, Optional, Sequence, cast
+from typing import Any, cast
 
 # helpers de data
-from utils.datetime_helpers import _as_iso, _as_dt
+from app.utils.datetime_helpers import _as_dt, _as_iso
 
 # primitives de coleta no Guru
-from app.services.coleta_guru import (
+from app.services.guru_client import (
     LIMITE_INFERIOR,
-    dividir_periodos_coleta_api_guru,
+    TransientGuruError,
     coletar_vendas,
     coletar_vendas_com_retry,
-    TransientGuruError,
+    dividir_periodos_coleta_api_guru,
 )
 
 
@@ -20,7 +21,7 @@ def iniciar_coleta_vendas_produtos(
     *,
     data_ini: str | date,
     data_fim: str | date,
-    nome_produto: Optional[str],
+    nome_produto: str | None,
     skus_info: Mapping[str, Mapping[str, Any]],
     transportadoras_permitidas: Sequence[str] = (),
 ) -> dict[str, Any]:
@@ -50,9 +51,7 @@ def iniciar_coleta_vendas_produtos(
         produtos_alvo: dict[str, Mapping[str, Any]] = {nome_produto: info}
     else:
         produtos_alvo = {
-            nome: info
-            for nome, info in skus_info.items()
-            if str(info.get("tipo", "")).strip().lower() != "assinatura"
+            nome: info for nome, info in skus_info.items() if str(info.get("tipo", "")).strip().lower() != "assinatura"
         }
 
     # Extrai guru_ids como lista de strings
@@ -76,6 +75,7 @@ def iniciar_coleta_vendas_produtos(
     }
 
     return payload
+
 
 def preparar_coleta_vendas_produtos(
     data_ini: str,
@@ -103,9 +103,7 @@ def preparar_coleta_vendas_produtos(
         produtos_alvo: dict[str, Mapping[str, Any]] = {nome_produto: info}
     else:
         produtos_alvo = {
-            nome: info
-            for nome, info in skus_info.items()
-            if str(info.get("tipo", "")).strip().lower() != "assinatura"
+            nome: info for nome, info in skus_info.items() if str(info.get("tipo", "")).strip().lower() != "assinatura"
         }
 
     # extrai IDs do Guru
@@ -129,6 +127,7 @@ def preparar_coleta_vendas_produtos(
         "transportadoras_permitidas": list(transportadoras_permitidas or []),
     }
 
+
 def coletar_vendas_produtos(
     dados: Mapping[str, Any],
 ) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
@@ -150,8 +149,7 @@ def coletar_vendas_produtos(
         raise ValueError("Intervalo inválido: inicio > fim.")
 
     # (opcional) clamp no limite inferior, se desejar
-    if ini_dt < LIMITE_INFERIOR:
-        ini_dt = LIMITE_INFERIOR
+    ini_dt = max(ini_dt, LIMITE_INFERIOR)
 
     # divide o período em blocos
     blocos = dividir_periodos_coleta_api_guru(ini_dt, end_dt)  # -> [(ini_iso, fim_iso), ...]
@@ -162,7 +160,7 @@ def coletar_vendas_produtos(
 
     # execução simples (sequencial). Se quiser, paralelize como em assinaturas.
     for pid in produtos_ids:
-        for (ini_iso, fim_iso) in blocos:
+        for ini_iso, fim_iso in blocos:
             try:
                 pagina = coletar_vendas(pid, ini_iso, fim_iso)
                 if pagina:

@@ -7,7 +7,7 @@ import os
 import sys
 from typing import TextIO, cast  # ⬅️ importa TextIO e cast
 
-from common.logging_setup import set_correlation_id, setup_logging
+from app.common.logging_setup import set_correlation_id, setup_logging
 
 # 1) configura logging global (respeita LOG_LEVEL, LOG_JSON, LOG_FILE)
 level = logging.DEBUG if os.getenv("DEBUG") == "1" else logging.INFO
