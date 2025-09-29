@@ -26,3 +26,9 @@ reportlab==4.4.1
 openai==1.82.0
 brazilcep==7.0.0
 PyQt5==5.15.11
+
+# Dev tools (formatação, lint, análise estática, hooks)
+black==24.8.0
+ruff==0.6.2
+mypy==1.10.0
+pre-commit==3.7.1
