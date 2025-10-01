@@ -1,12 +1,10 @@
 import json
 import re
-from collections.abc import Callable
-from typing import Any
-
-from shopify_vendas_produtos import _parse_endereco, parse_enderecos
-from viacep_client import buscar_cep_com_timeout
+from collections.abc import Callable, Mapping
+from typing import Any, TypedDict
 
 from app.schemas.shopify_vendas_produtos import EnderecoResultado
+from app.services.viacep_client import buscar_cep_com_timeout
 from app.utils.utils_helpers import (
     _normalizar_order_id,
     logger,
@@ -15,14 +13,41 @@ from app.utils.utils_helpers import (
     validar_endereco,
 )
 
+
 # -----------------------------------------------------------------------------
 # Enriquecimento: Parser/Normalização de endereço (+ LLM opcional)
 # -----------------------------------------------------------------------------
+class EnderecoResultado(TypedDict, total=False):
+    endereco_base: str
+    numero: str
+    complemento: str
+    precisa_contato: str  # "SIM" | "NÃO"
+    logradouro_oficial: str
+    bairro_oficial: str
+    raw_address1: str
+    raw_address2: str
+
+
 _numero_pat = re.compile(r"(?:^|\s|,|-)N(?:º|o|\.)?\s*(\d+)\b", flags=re.IGNORECASE)
 _fim_numero_pat = re.compile(
     r"\b(\d{1,6})(?:\s*(?:,|-|\s|apt\.?|apto\.?|bloco|casa|fundos|frente|sl|cj|q|qs)\b.*)?$",
     re.IGNORECASE,
 )
+
+
+def validar_endereco(address1: str) -> bool:
+    # heurística simples: existe algum dígito na linha?
+    return bool(re.search(r"\d", address1 or ""))
+
+
+def registrar_log_norm_enderecos(order_id: str, resultado: Mapping[str, Any]) -> None:
+    try:
+        logger.info(
+            "addr_norm_result",
+            extra={"order_id": order_id, "resultado": json.dumps(dict(resultado), ensure_ascii=False)},
+        )
+    except Exception:
+        logger.info("addr_norm_result", extra={"order_id": order_id})
 
 
 def _parse_endereco(address1: str, address2: str = "") -> dict[str, str]:

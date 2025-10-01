@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC, datetime
+from typing import Any
 
 from app.common.settings import settings
 
@@ -30,3 +32,19 @@ def _http_shopify_headers() -> dict[str, str]:
         "Content-Type": "application/json",
         "X-Shopify-Access-Token": settings.SHOPIFY_TOKEN,
     }
+
+
+def _coletar_remaining_lineitems(pedido: Mapping[str, Any]) -> dict[str, int]:
+    remaining: dict[str, int] = {}
+    fo_edges = (pedido.get("fulfillmentOrders") or {}).get("edges") or []
+    for fo_e in fo_edges:
+        fo_node = (fo_e or {}).get("node") or {}
+        li_edges = ((fo_node.get("lineItems") or {}).get("edges")) or []
+        for li_e in li_edges:
+            li_node = (li_e or {}).get("node") or {}
+            gid = ((li_node.get("lineItem") or {}) or {}).get("id") or ""
+            lid = str(gid).split("/")[-1] if gid else ""
+            rq = int(li_node.get("remainingQuantity") or 0)
+            if lid:
+                remaining[lid] = max(remaining.get(lid, 0), rq)
+    return remaining

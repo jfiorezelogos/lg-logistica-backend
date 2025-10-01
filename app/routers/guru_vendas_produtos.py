@@ -10,7 +10,7 @@ from app.services.guru_vendas_produtos import iniciar_coleta_vendas_produtos
 from app.services.guru_worker_coleta import executar_worker_guru
 from app.services.loader_produtos_info import load_skus_info
 
-router = APIRouter(prefix="/guru/vendas", tags=["Coleta"])
+router = APIRouter(prefix="/guru/pedidos", tags=["Coleta"])
 
 
 class ColetaOut(BaseModel):
@@ -19,7 +19,7 @@ class ColetaOut(BaseModel):
 
 
 @router.get("/produtos", response_model=ColetaOut)
-def coletar_vendas_shopify(
+def buscar_vendas_produtos_guru(
     data_ini: date = Query(..., description="Data inicial (YYYY-MM-DD)"),
     data_fim: date = Query(..., description="Data final (YYYY-MM-DD)"),
     nome_produto: str | None = Query(None, description="Nome do produto ou vazio para todos"),

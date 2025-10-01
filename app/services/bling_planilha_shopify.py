@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
-from app.services.shopify_vendas_produtos import _coletar_remaining_lineitems
+from app.services.shopify_client import _coletar_remaining_lineitems
 from app.services.viacep_client import _limpa_cep, obter_bairros_por_cep
 from app.utils.utils_helpers import _normalizar_order_id
 

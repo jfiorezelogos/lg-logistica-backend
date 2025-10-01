@@ -8,8 +8,6 @@ from collections.abc import Callable, Iterable, Mapping
 from datetime import datetime
 from typing import Any, cast
 
-from utils.utils_helpers import _normalizar_order_id
-
 from app.common.http_client import DEFAULT_TIMEOUT, get_session
 from app.common.settings import settings
 from app.schemas.shopify_vendas_produtos import _Pedido
@@ -20,8 +18,9 @@ from app.services.bling_planilha_shopify import (
 )
 from app.services.loader_main import carregar_skus
 from app.services.shopify_normalizar_gpt import normalizar_enderecos_batch
+from app.utils.utils_helpers import _normalizar_order_id
 
-from .shopify_client import _graphql_url, _http_shopify_headers
+from .shopify_client import _coletar_remaining_lineitems, _graphql_url, _http_shopify_headers
 
 # -----------------------------------------------------------------------------
 # logger
@@ -130,50 +129,6 @@ def _paginacao_vendas_shopify(search_str: str) -> Iterable[_Pedido]:
         cursor = cast(str | None, page.get("endCursor"))
 
 
-def _coletar_remaining_lineitems(pedido: Mapping[str, Any]) -> dict[str, int]:
-    remaining: dict[str, int] = {}
-    fo_edges = (pedido.get("fulfillmentOrders") or {}).get("edges") or []
-    for fo_e in fo_edges:
-        fo_node = (fo_e or {}).get("node") or {}
-        li_edges = ((fo_node.get("lineItems") or {}).get("edges")) or []
-        for li_e in li_edges:
-            li_node = (li_e or {}).get("node") or {}
-            gid = ((li_node.get("lineItem") or {}) or {}).get("id") or ""
-            lid = str(gid).split("/")[-1] if gid else ""
-            rq = int(li_node.get("remainingQuantity") or 0)
-            if lid:
-                remaining[lid] = max(remaining.get(lid, 0), rq)
-    return remaining
-
-
-def coletar_vendas_shopify(
-    data_inicio: str,
-    fulfillment_status: str = "any",
-    produto_alvo: str | None = None,
-) -> tuple[list[dict[str, Any]], dict[str, dict[str, int]]]:
-    search = _parametros_coleta_shopify(data_inicio, fulfillment_status)
-    skus_info = cast(Mapping[str, Mapping[str, Any]], carregar_skus())
-
-    modo_fs = (fulfillment_status or "any").strip().lower()
-    linhas: list[dict[str, Any]] = []
-
-    for pedido in _paginacao_vendas_shopify(search):
-        remaining = _coletar_remaining_lineitems(pedido)
-        linhas.extend(_linhas_por_pedido(pedido, modo_fs, produto_alvo, skus_info, remaining_por_line=remaining))
-
-    cont_status: dict[str, int] = {}
-    cont_prod: dict[str, int] = {}
-    for l in linhas:
-        st = (l.get("status_fulfillment") or "").upper()
-        cont_status[st] = cont_status.get(st, 0) + 1
-        prod = l.get("Produto") or ""
-        if prod:
-            cont_prod[prod] = cont_prod.get(prod, 0) + 1
-
-    contagem = {"status_fulfillment": cont_status, "produto": cont_prod}
-    return linhas, contagem
-
-
 # -----------------------------------------------------------------------------
 # CPF via GraphQL (reaproveite seu provider existente, se já houver)
 # -----------------------------------------------------------------------------
@@ -231,40 +186,70 @@ def obter_cpfs_pedidos_shopify(order_ids: Iterable[str]) -> dict[str, str]:
     return out
 
 
+def _coletar_pedidos_shopify_base(
+    *,
+    data_inicio: str,
+    fulfillment_status: str = "any",
+    sku_produtos: list[str] | None = None,  # filtro opcional por SKUs internos
+) -> list[dict[str, Any]]:
+    search = _parametros_coleta_shopify(data_inicio, fulfillment_status)
+    skus_info = cast(Mapping[str, Mapping[str, Any]], carregar_skus())
+
+    modo_fs = (fulfillment_status or "any").strip().lower()
+    sku_filter = {s.strip().upper() for s in (sku_produtos or []) if s.strip()}
+    linhas: list[dict[str, Any]] = []
+
+    for pedido in _paginacao_vendas_shopify(search):
+        # use o nome consistente que você tiver exportado (ex.: do shopify_common)
+        remaining = _coletar_remaining_lineitems(pedido)  # ou coletar_remaining_por_line(pedido)
+        linhas_pedido = _linhas_por_pedido(
+            pedido=pedido,
+            modo_fs=modo_fs,
+            produto_alvo=None,  # não filtramos por nome
+            skus_info=skus_info,
+            remaining_por_line=remaining,
+        )
+        # filtro por SKU, se houver
+        if sku_filter:
+            linhas.extend(l for l in linhas_pedido if str(l.get("SKU", "")).strip().upper() in sku_filter)
+        else:
+            linhas.extend(linhas_pedido)
+
+    return linhas
+
+
 def coletar_vendas_shopify(
     *,
     data_inicio: str,
     fulfillment_status: str = "any",
-    produto_alvo: str | None = None,
-    ids_shopify: list[str] | None = None,
-    enrich_cpfs: bool = True,
-    enrich_bairros: bool = True,
-    enrich_enderecos: bool = True,
+    sku_produtos: list[str] | None = None,  # filtro por SKUs
+    enrich_cpfs: bool = True,  # sempre True
+    enrich_bairros: bool = True,  # sempre True
+    enrich_enderecos: bool = True,  # sempre True
     use_ai_enderecos: bool = True,
     ai_provider: Callable[[str], Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, int]]]:
-    linhas, _ = coletar_vendas_shopify(
+
+    linhas = _coletar_pedidos_shopify_base(
         data_inicio=data_inicio,
         fulfillment_status=fulfillment_status,
-        produto_alvo=produto_alvo,
+        sku_produtos=sku_produtos,
     )
 
-    if ids_shopify:
-        ids_set = {str(i).strip() for i in ids_shopify}
-        linhas = [l for l in linhas if str(l.get("id_produto", "")).strip() in ids_set]
-
-    if enrich_bairros and linhas:
+    # enriquecimentos sempre ligados
+    if linhas and enrich_bairros:
         enriquecer_bairros_nas_linhas(linhas)
 
-    if enrich_enderecos and linhas:
+    if linhas and enrich_enderecos:
         normalizar_enderecos_batch(linhas, ai_provider=ai_provider if use_ai_enderecos else None)
 
-    if enrich_cpfs and linhas:
+    if linhas and enrich_cpfs:
         pendentes = {
             str(l.get("transaction_id", "")).strip() for l in linhas if not str(l.get("CPF/CNPJ Comprador", "")).strip()
         }
         pendentes = {p for p in pendentes if p}
         if pendentes:
+            # use o nome correto da sua função de CPF (ajuste se for obter_cpfs_bulk)
             mapa = obter_cpfs_pedidos_shopify(pendentes)
             if mapa:
                 enriquecer_cpfs_nas_linhas(linhas, mapa)

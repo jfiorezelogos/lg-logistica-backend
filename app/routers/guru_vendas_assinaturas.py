@@ -15,7 +15,7 @@ from app.services.loader_regras_assinaturas import (
     normalizar_rules,
 )
 
-router = APIRouter(prefix="/guru/vendas", tags=["Coleta"])
+router = APIRouter(prefix="/guru/pedidos", tags=["Coleta"])
 
 # --- caminhos (ajuste se necessário) ---
 BASE_DIR = Path(__file__).resolve().parents[2]

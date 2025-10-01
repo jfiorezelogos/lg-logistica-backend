@@ -4,7 +4,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, cast
 
-from app.services.bling_planilha import montar_planilha_vendas_guru
+from app.services.bling_planilha_guru import montar_planilha_vendas_guru
 
 
 def executar_worker_guru(
@@ -55,9 +55,9 @@ def executar_worker_guru(
                 skus_info=skus_info,
             )
         elif modo == "produtos":
-            from app.services.guru_vendas_produtos import coletar_vendas_shopify
+            from app.services.guru_vendas_produtos import coletar_vendas_guru
 
-            transacoes, _, dados_final_map = coletar_vendas_shopify(  # ajuste se sua assinatura exigir skus_info
+            transacoes, _, dados_final_map = coletar_vendas_guru(  # ajuste se sua assinatura exigir skus_info
                 cast(dict[str, Any], dict(dados))
             )
         else:
