@@ -1,32 +1,19 @@
 import json
 import re
 from collections.abc import Callable, Mapping
-from typing import Any, TypedDict
+from typing import Any
 
-from app.schemas.shopify_vendas_produtos import EnderecoResultado
+from app.schemas.shopify_vendas_produtos import ShopifyEnderecoResultado
 from app.services.viacep_client import buscar_cep_com_timeout
 from app.utils.utils_helpers import (
     _normalizar_order_id,
     logger,
     normalizar_texto,
-    registrar_log_norm_enderecos,
-    validar_endereco,
 )
-
 
 # -----------------------------------------------------------------------------
 # Enriquecimento: Parser/Normalização de endereço (+ LLM opcional)
 # -----------------------------------------------------------------------------
-class EnderecoResultado(TypedDict, total=False):
-    endereco_base: str
-    numero: str
-    complemento: str
-    precisa_contato: str  # "SIM" | "NÃO"
-    logradouro_oficial: str
-    bairro_oficial: str
-    raw_address1: str
-    raw_address2: str
-
 
 _numero_pat = re.compile(r"(?:^|\s|,|-)N(?:º|o|\.)?\s*(\d+)\b", flags=re.IGNORECASE)
 _fim_numero_pat = re.compile(
@@ -178,7 +165,7 @@ def normalizar_endereco_unico(
     address2: str,
     cep: str | None = None,
     ai_provider: Callable[[str], Any] | None = None,
-) -> EnderecoResultado:
+) -> ShopifyEnderecoResultado:
     pedido_id = _normalizar_order_id(order_id)
     logradouro_cep = ""
     bairro_cep = ""
@@ -230,7 +217,7 @@ def normalizar_endereco_unico(
                 if log_norm not in base_norm:
                     base = logradouro_cep.strip()
 
-    out: EnderecoResultado = {
+    out: ShopifyEnderecoResultado = {
         "endereco_base": base,
         "numero": numero or "s/n",
         "complemento": complemento,

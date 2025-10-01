@@ -278,7 +278,7 @@ def montar_planilha_vendas_guru(
     Backend puro: trata **assinaturas** e **produtos** (modo em dados['modo']).
     - Sem UI, sem estado/cancelador/callbacks.
     - Mantém contagem por tipo (para assinaturas); em produtos, contagens ficam zeradas.
-    Retorna (linhas_planilha, contagem).
+    Retorna (linhas_planilha, contagem) **padronizadas** para o layout do Bling.
     """
     linhas_planilha: list[dict[str, Any]] = []
 
@@ -308,7 +308,6 @@ def montar_planilha_vendas_guru(
 
     def _aplica_janela(dados_local: Mapping[str, Any], dtref: dt.datetime) -> bool:
         try:
-            # validar_regras_assinatura espera um dict mutável
             return bool(validar_regras_assinatura(cast(dict[str, Any], dados_local), dtref))
         except Exception:
             return False
@@ -394,7 +393,7 @@ def montar_planilha_vendas_guru(
                     }
                 )
 
-                # Se for combo, desmembrar (respeitando regra combo indisponível + mapeado)
+                # Combo
                 if info_prod.get("composto_de"):
                     mapeado = bool(info_prod.get("guru_ids")) and bool(info_prod.get("shopify_ids"))
                     indisponivel_combo = produto_indisponivel(nome_produto, sku=sku_produto, skus_info=skus_info)
@@ -414,8 +413,7 @@ def montar_planilha_vendas_guru(
                 print(f"[❌ ERRO] Transação {transacao.get('id')}: {e}")
                 traceback.print_exc()
 
-        # Para produtos, a contagem por tipo não se aplica (fica zerada)
-        # Normalização final do DF (mantemos a mesma saída da função antiga)
+        # Padronização final (produtos)
         try:
             df_novas = padronizar_planilha_bling(pd.DataFrame(linhas_planilha))
         except Exception as e:
@@ -431,7 +429,9 @@ def montar_planilha_vendas_guru(
         else:
             df_novas["indisponivel"] = [""] * len(df_novas)
 
-        return linhas_planilha, contagem
+        # ✅ retorna padronizado
+        linhas_pad = df_novas.to_dict(orient="records")
+        return linhas_pad, contagem
 
     # =========================
     # 🧠 MODO ASSINATURAS
@@ -633,7 +633,9 @@ def montar_planilha_vendas_guru(
     else:
         df_novas["indisponivel"] = [""] * len(df_novas)
 
-    return linhas_planilha, contagem
+    # ✅ retorna padronizado
+    linhas_pad = df_novas.to_dict(orient="records")
+    return linhas_pad, contagem
 
 
 class MapPedido(TypedDict):

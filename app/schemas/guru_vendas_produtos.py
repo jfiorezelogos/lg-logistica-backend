@@ -12,3 +12,8 @@ class BuscarProdutosIn(BaseModel):
     data_fim: date = Field(..., description="Data final no formato YYYY-MM-DD")
     nome_produto: str | None = Field(None, description="Nome do produto ou None para todos")
     skus_info: Mapping[str, Mapping[str, Any]] | None = None
+
+
+class ColetaOut(BaseModel):
+    linhas: list[dict[str, Any]]
+    contagem: dict[str, dict[str, int]]

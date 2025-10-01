@@ -102,3 +102,68 @@
 2025-10-01 04:22:35,248 [INFO] app.services.shopify_vendas_produtos: coleta_parcial
 2025-10-01 04:22:35,248 [INFO] app.services.shopify_vendas_produtos: coleta_parcial
 2025-10-01 04:22:35,248 [INFO] app.services.shopify_vendas_produtos: coleta_fim
+2025-10-01 14:23:34,083 [INFO] app.main: Inicializando LG Logística v2...
+2025-10-01 14:27:15,919 [INFO] app.main: Inicializando LG Logística v2...
+2025-10-01 15:09:48,267 [INFO] app.main: Inicializando LG Logística v2...
+2025-10-01 15:11:19,764 [INFO] app.main: Inicializando LG Logística v2...
+2025-10-01 15:17:38,340 [INFO] app.main: Inicializando LG Logística v2...
+2025-10-01 15:19:15,247 [INFO] app.main: Inicializando LG Logística v2...
+2025-10-01 15:20:56,619 [INFO] app.main: Inicializando LG Logística v2...
+2025-10-01 15:41:44,773 [INFO] app.main: Inicializando LG Logística v2...
+2025-10-01 15:58:16,541 [INFO] app.main: Inicializando LG Logística v2...
+2025-10-01 16:13:13,899 [INFO] app.main: Inicializando LG Logística v2...
+2025-10-01 16:13:33,478 [INFO] app.services.shopify_vendas_produtos: coleta_inicio
+2025-10-01 16:13:35,391 [INFO] app.services.shopify_vendas_produtos: graphql_page_ok
+2025-10-01 16:13:35,391 [INFO] app.services.shopify_vendas_produtos: coleta_parcial
+2025-10-01 16:13:35,392 [INFO] app.services.shopify_vendas_produtos: coleta_parcial
+2025-10-01 16:13:35,392 [INFO] app.services.shopify_vendas_produtos: coleta_parcial
+2025-10-01 16:13:35,393 [INFO] app.services.shopify_vendas_produtos: coleta_parcial
+2025-10-01 16:13:35,393 [INFO] app.services.shopify_vendas_produtos: coleta_parcial
+2025-10-01 16:13:36,666 [INFO] app.services.shopify_vendas_produtos: graphql_page_ok
+2025-10-01 16:13:36,667 [INFO] app.services.shopify_vendas_produtos: coleta_parcial
+2025-10-01 16:13:36,667 [INFO] app.services.shopify_vendas_produtos: coleta_parcial
+2025-10-01 16:13:36,668 [INFO] app.services.shopify_vendas_produtos: coleta_parcial
+2025-10-01 16:13:36,668 [INFO] app.services.shopify_vendas_produtos: coleta_parcial
+2025-10-01 16:13:36,669 [INFO] app.services.shopify_vendas_produtos: coleta_parcial
+2025-10-01 16:13:37,872 [INFO] app.services.shopify_vendas_produtos: graphql_page_ok
+2025-10-01 16:13:37,872 [INFO] app.services.shopify_vendas_produtos: coleta_parcial
+2025-10-01 16:13:37,873 [INFO] app.services.shopify_vendas_produtos: coleta_parcial
+2025-10-01 16:13:37,873 [INFO] app.services.shopify_vendas_produtos: coleta_parcial
+2025-10-01 16:13:37,874 [INFO] app.services.shopify_vendas_produtos: coleta_parcial
+2025-10-01 16:13:37,874 [INFO] app.services.shopify_vendas_produtos: coleta_parcial
+2025-10-01 16:13:38,103 [INFO] app.services.shopify_vendas_produtos: graphql_throttled
+2025-10-01 16:13:38,103 [INFO] app.utils.throttlers: graphql_throttle_sleep
+2025-10-01 16:13:42,270 [INFO] app.services.shopify_vendas_produtos: graphql_page_ok
+2025-10-01 16:13:42,270 [INFO] app.services.shopify_vendas_produtos: coleta_parcial
+2025-10-01 16:13:42,271 [INFO] app.services.shopify_vendas_produtos: coleta_parcial
+2025-10-01 16:13:42,271 [INFO] app.services.shopify_vendas_produtos: coleta_parcial
+2025-10-01 16:13:42,272 [INFO] app.services.shopify_vendas_produtos: coleta_parcial
+2025-10-01 16:13:42,272 [INFO] app.services.shopify_vendas_produtos: coleta_parcial
+2025-10-01 16:13:42,549 [INFO] app.services.shopify_vendas_produtos: graphql_throttled
+2025-10-01 16:13:42,550 [INFO] app.utils.throttlers: graphql_throttle_sleep
+2025-10-01 16:13:48,969 [INFO] app.services.shopify_vendas_produtos: graphql_page_ok
+2025-10-01 16:13:48,970 [INFO] app.services.shopify_vendas_produtos: coleta_parcial
+2025-10-01 16:13:48,970 [INFO] app.services.shopify_vendas_produtos: coleta_parcial
+2025-10-01 16:13:48,971 [INFO] app.services.shopify_vendas_produtos: coleta_parcial
+2025-10-01 16:13:48,971 [INFO] app.services.shopify_vendas_produtos: coleta_parcial
+2025-10-01 16:13:48,972 [INFO] app.services.shopify_vendas_produtos: coleta_parcial
+2025-10-01 16:13:49,209 [INFO] app.services.shopify_vendas_produtos: graphql_throttled
+2025-10-01 16:13:49,209 [INFO] app.utils.throttlers: graphql_throttle_sleep
+2025-10-01 16:13:55,690 [INFO] app.services.shopify_vendas_produtos: graphql_page_ok
+2025-10-01 16:13:55,691 [INFO] app.services.shopify_vendas_produtos: coleta_parcial
+2025-10-01 16:13:55,692 [INFO] app.services.shopify_vendas_produtos: coleta_parcial
+2025-10-01 16:13:55,692 [INFO] app.services.shopify_vendas_produtos: coleta_parcial
+2025-10-01 16:13:55,693 [INFO] app.services.shopify_vendas_produtos: coleta_parcial
+2025-10-01 16:13:55,693 [INFO] app.services.shopify_vendas_produtos: coleta_parcial
+2025-10-01 16:13:55,930 [INFO] app.services.shopify_vendas_produtos: graphql_throttled
+2025-10-01 16:13:55,930 [INFO] app.utils.throttlers: graphql_throttle_sleep
+2025-10-01 16:14:02,677 [INFO] app.services.shopify_vendas_produtos: graphql_page_ok
+2025-10-01 16:14:02,677 [INFO] app.services.shopify_vendas_produtos: coleta_parcial
+2025-10-01 16:14:02,678 [INFO] app.services.shopify_vendas_produtos: coleta_parcial
+2025-10-01 16:14:02,678 [INFO] app.services.shopify_vendas_produtos: coleta_parcial
+2025-10-01 16:14:02,679 [INFO] app.services.shopify_vendas_produtos: coleta_parcial
+2025-10-01 16:14:02,679 [INFO] app.services.shopify_vendas_produtos: coleta_fim
+2025-10-01 16:14:02,680 [INFO] app.services.shopify_vendas_produtos: enrich_cpfs_ok
+2025-10-01 16:14:02,680 [INFO] app.services.shopify_vendas_produtos: enrich_bairros_ok
+2025-10-01 16:14:02,682 [INFO] app.services.shopify_vendas_produtos: enrich_enderecos_ok
+2025-10-01 16:14:02,682 [INFO] app.services.shopify_vendas_produtos: coleta_total_ok

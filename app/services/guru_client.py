@@ -145,7 +145,7 @@ def _fetch_page_with_retry(
             status = r.status_code
             ct = (r.headers.get("content-type") or "").lower()
             body_text = r.text or ""
-            text_sample = body_text[:400].replace("\n", " ").strip()
+            _text_sample = body_text[:400].replace("\n", " ").strip()
 
             print(f"[HTTP] status={status} ct={ct or '-'} pid={product_id}")
 
@@ -156,7 +156,7 @@ def _fetch_page_with_retry(
             return cast(Mapping[str, Any], r.json())
 
         except Exception as e:
-            last_exc = e
+            _last_exc = e
             if tentativa < max_page_retries:
                 espera = (1.5**tentativa) + random.random()
                 print(

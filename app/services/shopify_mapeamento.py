@@ -45,7 +45,7 @@ def mapear_produtos_shopify_service(
 
     # Localiza entrada pelo SKU
     entrada: MutableMapping[str, Any] | None = None
-    for nome, info in skus_info.items():
+    for _nome, info in skus_info.items():
         if str(info.get("sku", "")).strip().upper() == sku_norm:
             entrada = cast(MutableMapping[str, Any], info)
             break

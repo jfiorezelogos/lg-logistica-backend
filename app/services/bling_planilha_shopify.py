@@ -5,7 +5,6 @@ from datetime import datetime
 from typing import Any
 
 from app.services.shopify_client import _coletar_remaining_lineitems
-from app.services.viacep_client import _limpa_cep, obter_bairros_por_cep
 from app.utils.utils_helpers import _normalizar_order_id
 
 
@@ -135,21 +134,70 @@ def _linhas_por_pedido(
     return linhas
 
 
-def enriquecer_bairros_nas_linhas(linhas: list[dict[str, Any]]) -> None:
-    ceps = {
-        _limpa_cep(l.get("CEP Comprador", ""))
-        for l in linhas
-        if not str(l.get("Bairro Comprador", "")).strip() and _limpa_cep(l.get("CEP Comprador", ""))
-    }
-    if not ceps:
-        return
-    bairros, _ = obter_bairros_por_cep(ceps)
-    if not bairros:
-        return
+def _enriquecer_bairros_local(linhas: list[dict[str, Any]]) -> None:
+    """
+    Preenche 'Bairro Comprador' usando apenas campos do pedido (address2 e padrões em address1).
+    Não faz chamadas externas.
+    """
+    import re as _re
+
     for l in linhas:
-        cep_limp = _limpa_cep(l.get("CEP Comprador", ""))
-        if cep_limp and not str(l.get("Bairro Comprador", "")).strip():
-            if cep_limp in bairros:
-                l["Bairro Comprador"] = bairros[cep_limp]
-                if not str(l.get("Bairro Entrega", "")).strip():
-                    l["Bairro Entrega"] = bairros[cep_limp]
+        if str(l.get("Bairro Comprador", "")).strip():
+            continue
+        cand = str(l.get("Complemento Entrega", "") or "").strip()
+        if not cand:
+            a1 = str(l.get("Endereço Entrega", "") or "")
+            m = _re.search(r"\b(bairro|jd\.?|jardim|vl\.?|vila|centro)\s+([A-Za-zÀ-ÿ0-9\- ]+)", a1, flags=_re.I)
+            if m:
+                cand = (m.group(0) or "").strip()
+        if cand:
+            l["Bairro Comprador"] = cand
+
+
+def _ajustar_enderecos_local(linhas: list[dict[str, Any]]) -> None:
+    """
+    Extrai número e complemento do 'Endereço Entrega' de forma determinística (regex),
+    sem IA e sem consultar CEP/serviços.
+    """
+    import re as _re
+
+    _numero_pat = _re.compile(r"(?:^|\s|,|-)N(?:º|o|\.)?\s*(\d+)\b", flags=_re.IGNORECASE)
+    _fim_numero_pat = _re.compile(
+        r"\b(\d{1,6})(?:\s*(?:,|-|\s|apt\.?|apto\.?|bloco|casa|fundos|frente|sl|cj|q|qs)\b.*)?$",
+        _re.IGNORECASE,
+    )
+
+    for l in linhas:
+        a1 = str(l.get("Endereço Entrega", "") or "").strip()
+        a2 = str(l.get("Complemento Entrega", "") or "").strip()
+
+        base = a1
+        numero = ""
+        compl = a2
+
+        m = _numero_pat.search(a1)
+        if m:
+            numero = m.group(1)
+            base = _numero_pat.sub("", a1).strip()
+        else:
+            m2 = _fim_numero_pat.search(a1)
+            if m2:
+                numero = m2.group(1)
+                base = a1[: m2.start(1)].strip()
+
+        # se sobrar "resto" após remover número, aproveita como complemento se ainda vazio
+        resto = a1.replace(base, "", 1)
+        resto = resto.replace(numero, "").strip(" ,-/")
+        if resto and not compl:
+            compl = resto
+
+        l["Endereço Entrega"] = base.strip(" ,-/")
+        if numero:
+            l["Número Entrega"] = numero
+            l["Precisa Contato"] = "NÃO"
+        else:
+            l["Número Entrega"] = str(l.get("Número Entrega", "") or "").strip()
+            if not l["Número Entrega"]:
+                l["Precisa Contato"] = "SIM"
+        if compl:
+            l["Complemento Entrega"] = compl.strip()

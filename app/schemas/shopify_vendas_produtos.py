@@ -5,7 +5,7 @@ from typing import Any, TypedDict
 from pydantic import BaseModel
 
 
-class _Pedido(TypedDict, total=False):
+class ShopifyPedido(TypedDict, total=False):
     id: str
     name: str
     createdAt: str
@@ -18,7 +18,7 @@ class _Pedido(TypedDict, total=False):
     fulfillmentOrders: dict[str, Any]
 
 
-class EnderecoResultado(TypedDict, total=False):
+class ShopifyEnderecoResultado(TypedDict, total=False):
     endereco_base: str
     numero: str
     complemento: str
@@ -29,7 +29,7 @@ class EnderecoResultado(TypedDict, total=False):
     raw_address2: str
 
 
-class ColetaProdutosIn(BaseModel):
+class ShopifyColetaPedidosIn(BaseModel):
     data_inicio: str
     fulfillment_status: str = "any"
     produto_alvo: str | None = None
@@ -43,6 +43,6 @@ class ColetaProdutosIn(BaseModel):
     use_ai_enderecos: bool = True
 
 
-class ColetaProdutosOut(BaseModel):
+class ShopifyColetaPedidosOut(BaseModel):
     linhas: list[dict[str, Any]]
     contagem: dict[str, dict[str, int]]

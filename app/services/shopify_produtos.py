@@ -4,7 +4,7 @@ from typing import Any
 
 from app.common.http_client import http_get
 from app.common.settings import settings
-from app.schemas.shopify_mapeamento import ProductShopifyVariant
+from app.schemas.shopify_produtos import ProductShopifyVariant
 from app.services.shopify_client import API_VERSION
 
 

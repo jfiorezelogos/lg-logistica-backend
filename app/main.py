@@ -29,8 +29,8 @@ logging.basicConfig(
     level=LOG_LEVEL,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[
-        logging.StreamHandler(),                    # console
-        logging.FileHandler(LOG_DIR / "app.log"),   # arquivo
+        logging.StreamHandler(),  # console
+        logging.FileHandler(LOG_DIR / "app.log"),  # arquivo
     ],
 )
 logger = logging.getLogger(__name__)
@@ -63,6 +63,7 @@ app.include_router(shopify_produtos_router)
 app.include_router(regras_router)
 app.include_router(catalogo_router)
 app.include_router(guru_importar_planilha_router)
+
 
 # ✅ rota de saúde simples
 @app.get("/health", tags=["Health"])

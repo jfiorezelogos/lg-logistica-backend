@@ -1,17 +1,11 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field
 
-from app.schemas.shopify_mapeamento import ProductShopifyVariant
+from app.schemas.shopify_produtos import ShopifyProdutosResponse
 from app.services.shopify_produtos import buscar_produtos_shopify
 
 router = APIRouter(prefix="/shopify", tags=["Coleta"])
-
-
-class ShopifyProdutosResponse(BaseModel):
-    count: int = Field(..., description="Quantidade de variantes retornadas")
-    data: list[ProductShopifyVariant]
 
 
 @router.get(

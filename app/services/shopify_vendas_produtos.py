@@ -10,14 +10,13 @@ from typing import Any, cast
 
 from app.common.http_client import DEFAULT_TIMEOUT, get_session
 from app.common.settings import settings
-from app.schemas.shopify_vendas_produtos import _Pedido
+from app.schemas.shopify_vendas_produtos import ShopifyPedido
 from app.services.bling_planilha_shopify import (
+    _ajustar_enderecos_local,
+    _enriquecer_bairros_local,
     _linhas_por_pedido,
-    enriquecer_bairros_nas_linhas,
-    enriquecer_cpfs_nas_linhas,
 )
 from app.services.loader_main import carregar_skus
-from app.services.shopify_normalizar_gpt import normalizar_enderecos_batch
 from app.utils.throttlers import (
     _GRAPHQL_BACKOFF_MAX,
     _GRAPHQL_BACKOFF_MIN,
@@ -41,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 
 def query_vendas_shopify() -> str:
-    # inclui campos usados na transformação (endereços, valores, line items e fulfillmentOrders p/ remaining)
+    # Inclui `localizationExtensions` para capturar CPF no mesmo payload.
     return """
     query($cursor: String, $search: String) {
       orders(first: 50, after: $cursor, query: $search) {
@@ -58,6 +57,13 @@ def query_vendas_shopify() -> str:
             }
             currentTotalDiscountsSet { shopMoney { amount } }
             shippingLine { discountedPriceSet { shopMoney { amount } } }
+
+            localizationExtensions(first: 10) {
+              edges {
+                node { purpose title value }
+              }
+            }
+
             lineItems(first: 50) {
               edges {
                 node {
@@ -106,9 +112,7 @@ def _parametros_coleta_shopify(data_inicio_ddmmyyyy: str, fulfillment_status: st
     return " ".join(filtros)
 
 
-
-
-def _paginacao_vendas_shopify(search_str: str) -> Iterable[_Pedido]:
+def _paginacao_vendas_shopify(search_str: str) -> Iterable[ShopifyPedido]:
     url = _graphql_url()
     headers = _http_shopify_headers()
     cursor: str | None = None
@@ -163,16 +167,11 @@ def _paginacao_vendas_shopify(search_str: str) -> Iterable[_Pedido]:
 
         logger.info(
             "graphql_page_ok",
-            extra={
-                "duration_s": dur,
-                "edges": len(edges),
-                "has_next": has_next,
-                "pagina": pagina,
-            },
+            extra={"duration_s": dur, "edges": len(edges), "has_next": has_next, "pagina": pagina},
         )
 
         for edge in edges:
-            yield cast(_Pedido, edge.get("node") or {})
+            yield cast(ShopifyPedido, edge.get("node") or {})
 
         if not has_next:
             break
@@ -254,7 +253,7 @@ def _coletar_pedidos_shopify_base(
         extra={
             "data_inicio": data_inicio,
             "fulfillment_status": modo_fs,
-            "sku_filter": sorted(list(sku_filter)) if sku_filter else None,
+            "sku_filter": sorted(sku_filter) or None,
         },
     )
 
@@ -264,8 +263,11 @@ def _coletar_pedidos_shopify_base(
 
     for pedido in _paginacao_vendas_shopify(search):
         total_pedidos += 1
-        remaining = _coletar_remaining_lineitems(pedido)  # ou coletar_remaining_por_line
-        # monta linhas do pedido
+
+        # ① remainingQuantity por lineItem (mesma página)
+        remaining = _coletar_remaining_lineitems(pedido)
+
+        # ② linhas do pedido
         linhas_pedido = _linhas_por_pedido(
             pedido=pedido,
             modo_fs=modo_fs,
@@ -273,8 +275,33 @@ def _coletar_pedidos_shopify_base(
             skus_info=skus_info,
             remaining_por_line=remaining,
         )
+
+        # ③ CPF direto do mesmo pedido (sem segunda chamada)
+        try:
+            cpf = ""
+            edges = (pedido.get("localizationExtensions", {}) or {}).get("edges", []) or []
+            for e in edges:
+                node = (e or {}).get("node", {}) or {}
+                title = str(node.get("title", "")).lower()
+                purpose = str(node.get("purpose", "")).lower()
+                if "cpf" in title or purpose == "tax":
+                    import re as _re
+
+                    cpf_raw = str(node.get("value", ""))
+                    cpf = _re.sub(r"\D", "", cpf_raw)[:11]
+                    if cpf:
+                        break
+            if cpf:
+                for l in linhas_pedido:
+                    if not str(l.get("CPF/CNPJ Comprador", "")).strip():
+                        l["CPF/CNPJ Comprador"] = cpf
+        except Exception:
+            pass
+
+        # ④ filtro por SKUs (se solicitado)
         if sku_filter:
             linhas_pedido = [l for l in linhas_pedido if str(l.get("SKU", "")).strip().upper() in sku_filter]
+
         linhas.extend(linhas_pedido)
         total_linhas += len(linhas_pedido)
 
@@ -303,34 +330,39 @@ def coletar_vendas_shopify(
     enrich_cpfs: bool = True,
     enrich_bairros: bool = True,
     enrich_enderecos: bool = True,
-    use_ai_enderecos: bool = True,
-    ai_provider: Callable[[str], Any] | None = None,
+    _use_ai_enderecos: bool = False,  # forçamos heurística local por padrão
+    _ai_provider: Callable[[str], Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, int]]]:
     t0 = time.time()
 
-    # ✅ usar o nome correto do parâmetro ao chamar a base
+    # 1) COLETAR (CPF já injetado na base)
     linhas = _coletar_pedidos_shopify_base(
         data_inicio=data_inicio,
         fulfillment_status=fulfillment_status,
-        sku_produtos=sku_produtos,   # <-- antes estava "skus"
+        sku_produtos=sku_produtos,
     )
 
-    # bairros
+    # 2) ENRIQUECER CPF — já feito na coleta; mantemos apenas para contabilidade (sem rede)
+    if linhas and enrich_cpfs:
+        pendentes_out = sum(1 for l in linhas if not str(l.get("CPF/CNPJ Comprador", "")).strip())
+        logger.info("enrich_cpfs_ok", extra={"pendentes_out": pendentes_out})
+
+    # 3) ENRIQUECER BAIRROS — apenas heurística local
     if linhas and enrich_bairros:
         tb = time.time()
         antes = sum(1 for l in linhas if not str(l.get("Bairro Comprador", "")).strip())
-        enriquecer_bairros_nas_linhas(linhas)
+        _enriquecer_bairros_local(linhas)
         depois = sum(1 for l in linhas if not str(l.get("Bairro Comprador", "")).strip())
         logger.info(
             "enrich_bairros_ok",
             extra={"pre_vazios": antes, "pos_vazios": depois, "duration_s": round(time.time() - tb, 3)},
         )
 
-    # endereços
+    # 4) AJUSTAR ENDEREÇOS — determinístico, sem IA/lookup
     if linhas and enrich_enderecos:
         te = time.time()
         faltavam_num = sum(1 for l in linhas if not str(l.get("Número Entrega", "")).strip())
-        normalizar_enderecos_batch(linhas, ai_provider=ai_provider if use_ai_enderecos else None)
+        _ajustar_enderecos_local(linhas)
         ainda_faltam_num = sum(1 for l in linhas if not str(l.get("Número Entrega", "")).strip())
         logger.info(
             "enrich_enderecos_ok",
@@ -338,35 +370,6 @@ def coletar_vendas_shopify(
                 "pre_sem_num": faltavam_num,
                 "pos_sem_num": ainda_faltam_num,
                 "duration_s": round(time.time() - te, 3),
-            },
-        )
-
-    # CPFs
-    if linhas and enrich_cpfs:
-        tc = time.time()
-        pendentes = {
-            str(l.get("transaction_id", "")).strip()
-            for l in linhas
-            if not str(l.get("CPF/CNPJ Comprador", "")).strip()
-        }
-        pendentes = {p for p in pendentes if p}
-        count_in = len(pendentes)
-
-        mapa: dict[str, str] = {}
-        if pendentes:
-            # ✅ alinhar com o nome do helper real (troque se o seu for diferente)
-            mapa = obter_cpfs_pedidos_shopify(pendentes)
-            if mapa:
-                enriquecer_cpfs_nas_linhas(linhas, mapa)
-
-        count_out = sum(1 for l in linhas if not str(l.get("CPF/CNPJ Comprador", "")).strip())
-        logger.info(
-            "enrich_cpfs_ok",
-            extra={
-                "pendentes_in": count_in,
-                "pendentes_out": count_out,
-                "encontrados": len(mapa),
-                "duration_s": round(time.time() - tc, 3),
             },
         )
 
@@ -380,8 +383,5 @@ def coletar_vendas_shopify(
         if prod:
             cont_prod[prod] = cont_prod.get(prod, 0) + 1
 
-    logger.info(
-        "coleta_total_ok",
-        extra={"linhas": len(linhas), "duration_s": round(time.time() - t0, 3)},
-    )
+    logger.info("coleta_total_ok", extra={"linhas": len(linhas), "duration_s": round(time.time() - t0, 3)})
     return linhas, {"status_fulfillment": cont_status, "produto": cont_prod}
