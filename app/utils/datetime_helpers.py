@@ -1,15 +1,19 @@
+# app/utils/datetime_helpers.py
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, date, datetime, time as dtime, timedelta
 from typing import Any
 
-# Tenta usar um parser robusto; se não houver, cai para fromisoformat
+# tenta usar dateutil se disponível
 try:
-    from dateutil.parser import parse as parse_date  # type: ignore
+    from dateutil.parser import parse as _parse_date
+
+    parse_date: Callable[[str], datetime] = _parse_date  # tipagem simplificada para o nosso uso
 except Exception:  # pragma: no cover
 
     def parse_date(s: str) -> datetime:
-        # Fallback simples: ISO estrito
+        """Fallback simples: aceita ISO estrito"""
         return datetime.fromisoformat(s)
 
 

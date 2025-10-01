@@ -173,6 +173,9 @@ def setup_logging(
     for name in quiet_loggers or ():
         logging.getLogger(name).setLevel(logging.WARNING)
 
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access", "fastapi"):
+        logging.getLogger(name).setLevel(level)
+
 
 # ---------------------------
 # Helpers

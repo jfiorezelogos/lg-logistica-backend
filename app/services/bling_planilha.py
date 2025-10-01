@@ -781,7 +781,7 @@ def calcular_valores_pedidos(
                 divisor=1,
             )
 
-    info_produto: SKUInfo = skus_info.get(produto_principal, {}) or {}
+    info_produto: SKUInfo = cast(SKUInfo, skus_info.get(produto_principal, {}))
     sku_principal: str = str(info_produto.get("sku", "") or "")
     peso_principal: float | int = cast(float | int, info_produto.get("peso", 0))
 
@@ -848,7 +848,7 @@ def calcular_valores_pedidos(
 
     if override_box:
         produto_principal = override_box
-        info_produto = skus_info.get(produto_principal, {}) or {}
+        info_produto = cast(SKUInfo, skus_info.get(produto_principal) or {})
         sku_principal = str(info_produto.get("sku", "") or "")
         peso_principal = cast(float | int, info_produto.get("peso", 0))
 
@@ -874,7 +874,7 @@ def calcular_valores_pedidos(
 
         if prod_custom and prod_custom in skus_info:
             produto_principal = cast(str, prod_custom)
-            info_produto = skus_info.get(produto_principal, {}) or {}
+            info_produto = skus_info.setdefault(produto_principal, {})
             sku_principal = str(info_produto.get("sku", "") or "")
             peso_principal = cast(float | int, info_produto.get("peso", 0))
 

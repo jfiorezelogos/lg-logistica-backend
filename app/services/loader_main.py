@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from fastapi import HTTPException
 
@@ -39,11 +39,12 @@ CFG_PATH = BASE_DIR / "config_ofertas.json"
 def carregar_skus() -> dict[str, dict[str, Any]]:
     """
     Carrega o skus.json da raiz do projeto.
-    Retorna dict[str, dict] (mesmo shape que você usa no app).
+    Retorna dict[str, dict[str, Any]] (mesmo shape que você usa no app).
     """
     try:
         with SKUS_PATH.open(encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+            return cast(dict[str, dict[str, Any]], data)
     except FileNotFoundError as e:
         raise HTTPException(status_code=500, detail=f"Arquivo não encontrado: {SKUS_PATH}") from e
     except Exception as e:

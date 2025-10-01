@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.common.middlewares import RequestIdMiddleware
 from app.routers.catalogo import router as catalogo_router
 from app.routers.guru_importar_planilha import router as importar_planilha_router
 from app.routers.guru_mapeamento import router as guru_mapear_router
@@ -15,6 +16,9 @@ from app.routers.shopify_mapeamento import router as shopify_mapear_router
 from app.routers.shopify_produtos import router as shopify_produtos_router
 
 app = FastAPI(title="LG Logística v2 - Backend")
+
+# Logging
+app.add_middleware(RequestIdMiddleware)
 
 # ✅ CORS — importante para Swagger e integrações com front-ends
 app.add_middleware(

@@ -14,7 +14,7 @@ from app.schemas.catalogo import (
     ProdutoPatch,
     SKUsPayload,
 )
-from app.services.catalogo import (
+from app.services.loader_catalogo import (
     carregar_skus,
     salvar_skus,
 )
@@ -242,6 +242,8 @@ def patch_por_sku(sku: str, body: dict[str, Any]) -> dict[str, Any]:
         nome, info = _resolver_por_sku(skus, sku)
 
         tipo = str(info.get("tipo") or "produto")
+
+        patch: BaseModel
         if tipo == "combo":
             patch = ComboPatch.model_validate(body)
         elif tipo == "assinatura":
@@ -255,6 +257,7 @@ def patch_por_sku(sku: str, body: dict[str, Any]) -> dict[str, Any]:
 
         salvar_skus(skus)
         return {"nome": nome, **info}
+
     except HTTPException:
         raise
     except Exception as e:

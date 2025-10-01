@@ -1,16 +1,31 @@
+# app/config.py
+from __future__ import annotations
+
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import BaseSettings, Field
+from pydantic import AliasChoices, Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    timezone: str = Field("America/Sao_Paulo", env="TZ")
-    regras_path: str = Field("app/config_ofertas.json", env="REGRAS_PATH")
+    # valores padrão
+    timezone: str = Field(
+        default="America/Sao_Paulo",
+        # nomes de env aceitos (primeiro que existir é usado)
+        validation_alias=AliasChoices("TZ", "TIMEZONE"),
+    )
+    regras_path: str = Field(
+        default="app/config_ofertas.json",
+        validation_alias=AliasChoices("REGRAS_PATH"),
+    )
 
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
+    # configuração do carregamento
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+    )
 
 
 @lru_cache(maxsize=1)
