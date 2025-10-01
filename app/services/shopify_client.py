@@ -19,3 +19,14 @@ def obter_api_shopify_version(now: datetime | None = None) -> str:
 API_VERSION = obter_api_shopify_version()
 GRAPHQL_URL = f"https://{settings.SHOP_URL}/admin/api/{API_VERSION}/graphql.json"
 REST_URL = f"https://{settings.SHOP_URL}/admin/api/{API_VERSION}"  # útil para endpoints REST
+
+
+def _graphql_url() -> str:
+    return f"https://{settings.SHOP_URL}/admin/api/{obter_api_shopify_version()}/graphql.json"
+
+
+def _http_shopify_headers() -> dict[str, str]:
+    return {
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": settings.SHOPIFY_TOKEN,
+    }

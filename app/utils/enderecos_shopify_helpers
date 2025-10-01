@@ -1,0 +1,32 @@
+from typing import Mapping, TypedDict, Any
+import re
+import unicodedata
+import json
+import logging
+
+logger = logging.getLogger(__name__)
+
+class EnderecoResultado(TypedDict, total=False):
+    endereco_base: str
+    numero: str
+    complemento: str
+    precisa_contato: str  # "SIM" | "NÃO"
+    logradouro_oficial: str
+    bairro_oficial: str
+    raw_address1: str
+    raw_address2: str
+
+def normalizar_texto(s: str) -> str:
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    return s.lower().strip()
+
+def validar_endereco(address1: str) -> bool:
+    # heurística simples: existe algum dígito na linha?
+    return bool(re.search(r"\d", address1 or ""))
+
+def registrar_log_norm_enderecos(order_id: str, resultado: Mapping[str, Any]) -> None:
+    try:
+        logger.info("addr_norm_result", extra={"order_id": order_id, "resultado": json.dumps(dict(resultado), ensure_ascii=False)})
+    except Exception:
+        logger.info("addr_norm_result", extra={"order_id": order_id})

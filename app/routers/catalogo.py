@@ -8,8 +8,6 @@ from pydantic import BaseModel
 from app.schemas.catalogo import (
     AssinaturaPatch,
     ComboPatch,
-    IdIntIn,  # se você já usa
-    IdStrIn,
     ItemCreate,
     ProdutoPatch,
     SKUsPayload,
@@ -61,7 +59,7 @@ def _resolver_por_sku(skus: dict[str, dict[str, Any]], sku: str) -> tuple[str, d
 
 @router.get(
     "/",
-    summary="Listar SKUs (arquivo completo)",
+    summary="Listar todos produtos cadastrados",
     description="Retorna o conteúdo do `skus.json` como dict nome→info (formato atual do arquivo).",
 )
 def listar_skus() -> dict[str, dict[str, Any]]:
@@ -73,7 +71,7 @@ def listar_skus() -> dict[str, dict[str, Any]]:
 
 @router.put(
     "/",
-    summary="Substituir skus.json (completo)",
+    summary="Substituir o arquivo skus.json por um novo",
     description="Sobrescreve o arquivo `skus.json` com o payload enviado.",
     response_model=dict[str, dict[str, Any]],
 )
@@ -267,20 +265,21 @@ def patch_por_sku(sku: str, body: dict[str, Any]) -> dict[str, Any]:
 # =========================
 # Endpoints atômicos para IDs (Guru/Shopify)
 # =========================
+class IdsIn(BaseModel):
+    ids: list[str]
 
 
 @router.post(
     "/{sku}/gid",
-    summary="Adicionar um Guru ID ao item (por SKU)",
+    summary="Adicionar um ou mais Guru IDs ao item (por SKU)",
 )
-def add_guru_id(sku: str, body: IdStrIn) -> dict[str, Any]:
+def add_guru_ids(sku: str, body: IdsIn) -> dict[str, Any]:
     skus = carregar_skus()
     nome, info = _resolver_por_sku(skus, (sku or "").strip())
-    ids = list(info.get("guru_ids") or [])
-    if body.id not in ids:
-        ids.append(body.id)
-        info["guru_ids"] = ids
-        salvar_skus(skus)
+    ids = set(info.get("guru_ids") or [])
+    ids.update(body.ids)
+    info["guru_ids"] = list(ids)
+    salvar_skus(skus)
     return {"nome": nome, **info}
 
 
@@ -296,18 +295,21 @@ def remove_guru_id(sku: str, gid: str) -> dict[str, Any]:
     return {"nome": nome, **info}
 
 
+class IdsIntIn(BaseModel):
+    ids: list[int]
+
+
 @router.post(
     "/{sku}/sid",
-    summary="Adicionar um Shopify ID ao item (por SKU)",
+    summary="Adicionar um ou mais Shopify IDs ao item (por SKU)",
 )
-def add_shopify_id(sku: str, body: IdIntIn) -> dict[str, Any]:
+def add_shopify_ids(sku: str, body: IdsIntIn) -> dict[str, Any]:
     skus = carregar_skus()
     nome, info = _resolver_por_sku(skus, (sku or "").strip())
-    ids = list(info.get("shopify_ids") or [])
-    if body.id not in ids:
-        ids.append(body.id)
-        info["shopify_ids"] = ids
-        salvar_skus(skus)
+    ids = set(info.get("shopify_ids") or [])
+    ids.update(body.ids)
+    info["shopify_ids"] = list(ids)
+    salvar_skus(skus)
     return {"nome": nome, **info}
 
 

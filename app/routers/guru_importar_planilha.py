@@ -9,13 +9,13 @@ from app.schemas.guru_importar_planilha import (  # <- confira o nome do módulo
 )
 from app.services.guru_importar_planilha import importar as importar_service
 
-router = APIRouter(prefix="/importar", tags=["Importação"])
+router = APIRouter(prefix="/guru", tags=["Importação"])
 
 
 @router.post(
-    "/guru-planilha",
+    "/importar-planilha",
     response_model=ImportResultado,
-    summary="Importar planilha do Guru",
+    summary="Importar planilha de vendas do Guru",
     description=(
         "Recebe um arquivo CSV/XLSX exportado do Guru via multipart/form-data. "
         "Campos do formulário: `sku` (SKU conforme skus.json) e `file` (planilha)."
