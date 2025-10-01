@@ -19,7 +19,7 @@ class ColetaOut(BaseModel):
 
 
 @router.get("/produtos", response_model=ColetaOut)
-def coletar_vendas_produtos(
+def coletar_vendas_shopify(
     data_ini: date = Query(..., description="Data inicial (YYYY-MM-DD)"),
     data_fim: date = Query(..., description="Data final (YYYY-MM-DD)"),
     nome_produto: str | None = Query(None, description="Nome do produto ou vazio para todos"),

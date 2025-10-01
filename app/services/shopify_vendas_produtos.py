@@ -8,14 +8,14 @@ from collections.abc import Callable, Iterable, Mapping
 from datetime import datetime
 from typing import Any, cast
 
-import requests
 from utils.utils_helpers import _normalizar_order_id
 
+from app.common.http_client import DEFAULT_TIMEOUT, get_session
 from app.common.settings import settings
 from app.schemas.shopify_vendas_produtos import _Pedido
 from app.services.loader_main import carregar_skus
 from app.services.shopify_normalizar_gpt import normalizar_enderecos_batch
-from app.services.shopify_planilha import _linhas_por_pedido, enriquecer_bairros_nas_linhas
+from app.services.shopify_planilha import _linhas_por_pedido, enriquecer_bairros_nas_linhas, enriquecer_cpfs_nas_linhas
 
 from .shopify_client import _graphql_url, _http_shopify_headers
 
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 # -----------------------------------------------------------------------------
 
 
-def _mk_query_orders() -> str:
+def query_vendas_shopify() -> str:
     # inclui campos usados na transformação (endereços, valores, line items e fulfillmentOrders p/ remaining)
     return """
     query($cursor: String, $search: String) {
@@ -80,27 +80,31 @@ def _mk_query_orders() -> str:
     """.strip()
 
 
-def _build_search(data_inicio_ddmmyyyy: str, fulfillment_status: str) -> str:
+def _parametros_coleta_shopify(data_inicio_ddmmyyyy: str, fulfillment_status: str) -> str:
     # created_at:>=YYYY-MM-DD + fulfillment_status opcional
     try:
         dt = datetime.strptime(data_inicio_ddmmyyyy, "%d/%m/%Y")
     except Exception:
         raise ValueError('data_inicio inválida: use "dd/MM/yyyy"')
 
-    filtros: list[str] = [f'created_at:>={dt.strftime("%Y-%m-%d")}']
+    filtros: list[str] = [
+        f'created_at:>={dt.strftime("%Y-%m-%d")}',
+        "financial_status:paid",
+    ]
     if (fulfillment_status or "any").strip().lower() == "unfulfilled":
         filtros.append("fulfillment_status:unfulfilled")
     return " ".join(filtros)
 
 
-def _paginado_orders(search_str: str) -> Iterable[_Pedido]:
+def _paginacao_vendas_shopify(search_str: str) -> Iterable[_Pedido]:
     url = _graphql_url()
     headers = _http_shopify_headers()
     cursor: str | None = None
 
+    sess = get_session()  # sessão global com retry/backoff
     while True:
-        body = {"query": _mk_query_orders(), "variables": {"cursor": cursor, "search": search_str}}
-        resp = requests.post(url, json=body, headers=headers, timeout=12, verify=False)
+        body = {"query": query_vendas_shopify(), "variables": {"cursor": cursor, "search": search_str}}
+        resp = sess.post(url, json=body, headers=headers, timeout=DEFAULT_TIMEOUT)
         if resp.status_code == 429:
             time.sleep(int(resp.headers.get("Retry-After", "2")))
             continue
@@ -122,7 +126,7 @@ def _paginado_orders(search_str: str) -> Iterable[_Pedido]:
         cursor = cast(str | None, page.get("endCursor"))
 
 
-def _coletar_remaining_por_line(pedido: Mapping[str, Any]) -> dict[str, int]:
+def _coletar_remaining_lineitems(pedido: Mapping[str, Any]) -> dict[str, int]:
     remaining: dict[str, int] = {}
     fo_edges = (pedido.get("fulfillmentOrders") or {}).get("edges") or []
     for fo_e in fo_edges:
@@ -138,19 +142,20 @@ def _coletar_remaining_por_line(pedido: Mapping[str, Any]) -> dict[str, int]:
     return remaining
 
 
-def coletar_vendas_produtos(
+def coletar_vendas_shopify(
     data_inicio: str,
     fulfillment_status: str = "any",
     produto_alvo: str | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, int]]]:
-    search = _build_search(data_inicio, fulfillment_status)
+    search = _parametros_coleta_shopify(data_inicio, fulfillment_status)
     skus_info = cast(Mapping[str, Mapping[str, Any]], carregar_skus())
 
     modo_fs = (fulfillment_status or "any").strip().lower()
     linhas: list[dict[str, Any]] = []
 
-    for pedido in _paginado_orders(search):
-        linhas.extend(_linhas_por_pedido(pedido, modo_fs, produto_alvo, skus_info))
+    for pedido in _paginacao_vendas_shopify(search):
+        remaining = _coletar_remaining_lineitems(pedido)
+        linhas.extend(_linhas_por_pedido(pedido, modo_fs, produto_alvo, skus_info, remaining_por_line=remaining))
 
     cont_status: dict[str, int] = {}
     cont_prod: dict[str, int] = {}
@@ -173,16 +178,15 @@ _gql_lock = threading.Lock()
 _gql_ultimo = 0.0
 
 
-def obter_cpfs_bulk(order_ids: Iterable[str]) -> dict[str, str]:
+def obter_cpfs_pedidos_shopify(order_ids: Iterable[str]) -> dict[str, str]:
     out: dict[str, str] = {}
-    sess = requests.Session()
-    sess.headers.update({"Content-Type": "application/json", "X-Shopify-Access-Token": settings.SHOPIFY_TOKEN})
+    sess = get_session()
+    headers = {"Content-Type": "application/json", "X-Shopify-Access-Token": settings.SHOPIFY_TOKEN}
 
     for oid in order_ids:
         oid_norm = _normalizar_order_id(oid)
         gid = f"gid://shopify/Order/{oid_norm}"
 
-        # throttle
         global _gql_ultimo
         with _gql_lock:
             delta = time.time() - _gql_ultimo
@@ -204,10 +208,10 @@ def obter_cpfs_bulk(order_ids: Iterable[str]) -> dict[str, str]:
             """
         }
         try:
-            r = sess.post(_graphql_url(), json=q, timeout=10, verify=False)
+            r = sess.post(_graphql_url(), json=q, headers=headers, timeout=DEFAULT_TIMEOUT)
             if r.status_code == 200:
                 data = r.json()
-                edges = data.get("data", {}).get("order", {}).get("localizationExtensions", {}).get("edges", [])
+                edges = data.get("data", {}).get("order", {}).get("localizationExtensions", {}).get("edges", []) or []
                 cpf = ""
                 for e in edges:
                     node = (e or {}).get("node", {})
@@ -217,17 +221,10 @@ def obter_cpfs_bulk(order_ids: Iterable[str]) -> dict[str, str]:
                 if cpf:
                     out[oid_norm] = cpf
         except Exception:
+            # resiliente: segue com os próximos
             pass
 
     return out
-
-
-def enriquecer_cpfs_nas_linhas(linhas: list[dict[str, str]], mapa_cpfs: dict[str, str]) -> None:
-    for l in linhas:
-        if not l.get("CPF/CNPJ Comprador"):
-            tid = _normalizar_order_id(l.get("transaction_id", ""))
-            if tid and tid in mapa_cpfs:
-                l["CPF/CNPJ Comprador"] = mapa_cpfs[tid]
 
 
 def coletar_vendas_shopify(
@@ -242,7 +239,7 @@ def coletar_vendas_shopify(
     use_ai_enderecos: bool = True,
     ai_provider: Callable[[str], Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, int]]]:
-    linhas, _ = coletar_vendas_produtos(
+    linhas, _ = coletar_vendas_shopify(
         data_inicio=data_inicio,
         fulfillment_status=fulfillment_status,
         produto_alvo=produto_alvo,
@@ -264,7 +261,7 @@ def coletar_vendas_shopify(
         }
         pendentes = {p for p in pendentes if p}
         if pendentes:
-            mapa = obter_cpfs_bulk(pendentes)
+            mapa = obter_cpfs_pedidos_shopify(pendentes)
             if mapa:
                 enriquecer_cpfs_nas_linhas(linhas, mapa)
 

@@ -12,20 +12,29 @@ from urllib3.util.retry import Retry
 from .errors import ExternalError
 from .logging_setup import get_correlation_id, get_logger
 
-DEFAULT_TIMEOUT: tuple[int, int] = (5, 30)
+# ----------------------------------------------------------------------
+# Configuração
+# ----------------------------------------------------------------------
+DEFAULT_TIMEOUT: tuple[int, int] = (5, 30)  # (connect, read)
 TRANSIENT_STATUSES = (429, 500, 502, 503, 504)
+# Inclui POST porque alguns endpoints de terceiros consideram POST idempotente/retry-safe
 IDEMPOTENT_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "POST"})
 
 logger = get_logger("http")
 
 
+# ----------------------------------------------------------------------
+# Retry / Session
+# ----------------------------------------------------------------------
 def _build_retry(
     total: int = 5,
     backoff_factor: float = 0.5,
     statuses: tuple[int, ...] = TRANSIENT_STATUSES,
     methods: frozenset[str] = IDEMPOTENT_METHODS,
 ) -> Retry:
-    """Cria política de retry exponencial com respeito a Retry-After (429/503)."""
+    """
+    Cria política de retry exponencial com respeito ao cabeçalho Retry-After (429/503).
+    """
     common_kwargs: dict[str, Any] = {
         "total": total,
         "connect": total,
@@ -36,13 +45,20 @@ def _build_retry(
         "raise_on_status": False,
         "respect_retry_after_header": True,
     }
+    # Compat com versões antigas do urllib3
     try:
         return Retry(allowed_methods=methods, **common_kwargs)
     except TypeError:
-        return Retry(method_whitelist=methods, **common_kwargs)  # compat antiga
+        return Retry(method_whitelist=methods, **common_kwargs)  # type: ignore[arg-type]
 
 
 def _build_session() -> requests.Session:
+    """
+    Cria uma sessão com:
+      - headers default
+      - pool de conexões
+      - retry/backoff para erros transitórios
+    """
     s = requests.Session()
     s.headers.update(
         {
@@ -59,17 +75,38 @@ def _build_session() -> requests.Session:
 
 @lru_cache(maxsize=1)
 def _get_cached_session() -> requests.Session:
+    """
+    Sessão compartilhada entre chamadas (pool + retry).
+    """
     return _build_session()
 
 
 def get_session(session: requests.Session | None = None) -> requests.Session:
+    """
+    Permite injetar uma sessão custom, senão usa a cacheada.
+    """
     return session or _get_cached_session()
 
 
+# ----------------------------------------------------------------------
+# Core request wrapper
+# ----------------------------------------------------------------------
 def _request_with_handling(method: str, url: str, **kwargs: Any) -> requests.Response:
+    """
+    Wrapper com:
+      - timeout padrão (connect/read)
+      - retry/backoff (na sessão)
+      - correlation-id automático
+      - jitter opcional para suavizar thundering herd
+      - mapeamento de exceções para ExternalError com flags de retry
+    """
     timeout = kwargs.pop("timeout", DEFAULT_TIMEOUT)
     session: requests.Session = kwargs.pop("session", get_session())
     jitter_max: float = kwargs.pop("jitter_max", 0.0)
+
+    # alerta se alguém desativar TLS sem querer
+    if kwargs.get("verify") is False:
+        logger.warning("TLS verification disabled explicitly for %s", url)
 
     if jitter_max and jitter_max > 0:
         time.sleep(random.uniform(0, jitter_max))
@@ -91,7 +128,7 @@ def _request_with_handling(method: str, url: str, **kwargs: Any) -> requests.Res
         return res
 
     except requests.Timeout as e:
-        logger.warning("HTTP %s timeout", method, extra={"url": url})
+        logger.warning("HTTP %s timeout", method, extra={"url": url, "cid": get_correlation_id()})
         raise ExternalError(
             f"Timeout ao chamar {url}",
             code="HTTP_TIMEOUT",
@@ -140,6 +177,9 @@ def _request_with_handling(method: str, url: str, **kwargs: Any) -> requests.Res
         ) from e
 
 
+# ----------------------------------------------------------------------
+# Public wrappers
+# ----------------------------------------------------------------------
 def http_get(url: str, **kwargs: Any) -> requests.Response:
     return _request_with_handling("GET", url, **kwargs)
 

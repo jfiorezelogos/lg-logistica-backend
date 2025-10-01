@@ -128,7 +128,7 @@ def preparar_coleta_vendas_produtos(
     }
 
 
-def coletar_vendas_produtos(
+def coletar_vendas_shopify(
     dados: Mapping[str, Any],
 ) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
     """

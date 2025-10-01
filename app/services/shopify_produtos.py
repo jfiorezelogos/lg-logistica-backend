@@ -11,8 +11,7 @@ from app.services.shopify_client import API_VERSION
 def buscar_produtos_shopify() -> list[ProductShopifyVariant]:
     """
     Consulta a API REST da Shopify e retorna uma lista plana de variantes de produtos
-    com product_id, variant_id, title e sku.
-    Faz paginação automática (limit=250) até acabar.
+    com product_id, variant_id, title e sku. Paginação automática (limit=250).
     """
     url: str | None = f"https://{settings.SHOP_URL}/admin/api/{API_VERSION}/products.json?limit=250"
     headers: dict[str, str] = {
@@ -24,12 +23,13 @@ def buscar_produtos_shopify() -> list[ProductShopifyVariant]:
     pagina_atual: int = 1
 
     while url:
-        resp = http_get(url, headers=headers, verify=False)
+        # ❌ remove verify=False — seu http_get já deve validar TLS por padrão
+        resp = http_get(url, headers=headers)
         if resp.status_code != 200:
             print(f"❌ Erro Shopify {resp.status_code}: {resp.text}")
             break
 
-        produtos_json: list[dict[str, Any]] = resp.json().get("products", [])
+        produtos_json: list[dict[str, Any]] = resp.json().get("products", []) or []
         print(f"📄 Página {pagina_atual}: {len(produtos_json)} produtos retornados")
 
         for produto in produtos_json:
@@ -69,7 +69,7 @@ def buscar_produtos_shopify() -> list[ProductShopifyVariant]:
         # paginação via header "Link"
         link: str = resp.headers.get("Link", "") or ""
         if 'rel="next"' in link:
-            partes = link.split(",")
+            partes = [p.strip() for p in link.split(",")]
             next_url_parts = [p.split(";")[0].strip().strip("<>") for p in partes if 'rel="next"' in p]
             url = next_url_parts[0] if next_url_parts else None
         else:

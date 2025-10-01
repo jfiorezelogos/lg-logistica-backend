@@ -55,9 +55,9 @@ def executar_worker_guru(
                 skus_info=skus_info,
             )
         elif modo == "produtos":
-            from app.services.guru_vendas_produtos import coletar_vendas_produtos
+            from app.services.guru_vendas_produtos import coletar_vendas_shopify
 
-            transacoes, _, dados_final_map = coletar_vendas_produtos(  # ajuste se sua assinatura exigir skus_info
+            transacoes, _, dados_final_map = coletar_vendas_shopify(  # ajuste se sua assinatura exigir skus_info
                 cast(dict[str, Any], dict(dados))
             )
         else:

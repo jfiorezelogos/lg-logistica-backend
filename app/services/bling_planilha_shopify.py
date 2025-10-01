@@ -4,8 +4,17 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
-from app.services.shopify_vendas_produtos import _coletar_remaining_por_line
+from app.services.shopify_vendas_produtos import _coletar_remaining_lineitems
 from app.services.viacep_client import _limpa_cep, obter_bairros_por_cep
+from app.utils.utils_helpers import _normalizar_order_id
+
+
+def enriquecer_cpfs_nas_linhas(linhas: list[dict[str, str]], mapa_cpfs: dict[str, str]) -> None:
+    for l in linhas:
+        if not l.get("CPF/CNPJ Comprador"):
+            tid = _normalizar_order_id(l.get("transaction_id", ""))
+            if tid and tid in mapa_cpfs:
+                l["CPF/CNPJ Comprador"] = mapa_cpfs[tid]
 
 
 def _linhas_por_pedido(
@@ -13,6 +22,7 @@ def _linhas_por_pedido(
     modo_fs: str,
     produto_alvo: str | None,
     skus_info: Mapping[str, Mapping[str, Any]],
+    remaining_por_line: dict[str, int] | None = None,  # <-- novo
 ) -> list[dict[str, Any]]:
     # mapeia product_id -> (nome_produto, sku_interno) a partir do skus.json
     prod_map: dict[str, tuple[str, str]] = {}
@@ -41,7 +51,7 @@ def _linhas_por_pedido(
     desc_any = (pedido.get("currentTotalDiscountsSet") or {}).get("shopMoney") or {}
     valor_desconto = float(desc_any.get("amount") or 0)
 
-    remaining_por_line = _coletar_remaining_por_line(pedido)
+    remaining_por_line = _coletar_remaining_lineitems(pedido)
 
     linhas: list[dict[str, Any]] = []
     for item_edge in (pedido.get("lineItems") or {}).get("edges", []):
@@ -62,7 +72,7 @@ def _linhas_por_pedido(
         id_line_item = str(item.get("id") or "").split("/")[-1]
 
         if modo_fs == "unfulfilled":
-            remaining = int(remaining_por_line.get(id_line_item, 0))
+            remaining = int((remaining_por_line or {}).get(id_line_item, 0))
             if remaining <= 0:
                 continue
             qtd_a_gerar = remaining
