@@ -23,22 +23,22 @@ def _parse_sku_list(valor: str | None) -> list[str] | None:
     response_model=ColetaProdutosOut,
     summary="Coletar vendas de produtos na Shopify",
 )
-def coletar_vendas_endpoint(
+def coletar_vendas__shopify_endpoint(
     data_inicio: str = Query(..., description="Data inicial no formato dd/MM/yyyy"),
     fulfillment_status: str = Query("any", description='"any" ou "unfulfilled"'),
-    sku_produtos: str | None = Query(
+    skus: str | None = Query(
         None,
         description='SKU ou lista separada por vírgula (ex.: "L006A" ou "L006A,L007B")',
     ),
 ) -> ColetaProdutosOut:
-    skus = _parse_sku_list(sku_produtos)
+    skus = _parse_sku_list(skus)
 
     # Enriquecimentos sempre ligados
     linhas, contagem = coletar_vendas_shopify(
         data_inicio=data_inicio,
         fulfillment_status=fulfillment_status,
         # passa None para "todos" ou lista de SKUs quando houver filtro
-        sku_produtos=skus,
+        skus=skus,
         enrich_cpfs=True,
         enrich_bairros=True,
         enrich_enderecos=True,

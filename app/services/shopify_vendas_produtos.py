@@ -18,6 +18,13 @@ from app.services.bling_planilha_shopify import (
 )
 from app.services.loader_main import carregar_skus
 from app.services.shopify_normalizar_gpt import normalizar_enderecos_batch
+from app.utils.throttlers import (
+    _GRAPHQL_BACKOFF_MAX,
+    _GRAPHQL_BACKOFF_MIN,
+    _GRAPHQL_BACKOFF_MULT,
+    _sleep_throttle,
+    _throttle_from_extensions,
+)
 from app.utils.utils_helpers import _normalizar_order_id
 
 from .shopify_client import _coletar_remaining_lineitems, _graphql_url, _http_shopify_headers
@@ -99,34 +106,78 @@ def _parametros_coleta_shopify(data_inicio_ddmmyyyy: str, fulfillment_status: st
     return " ".join(filtros)
 
 
+
+
 def _paginacao_vendas_shopify(search_str: str) -> Iterable[_Pedido]:
     url = _graphql_url()
     headers = _http_shopify_headers()
     cursor: str | None = None
 
-    sess = get_session()  # sessão global com retry/backoff
+    sess = get_session()
+    backoff = _GRAPHQL_BACKOFF_MIN
+    pagina = 0
+
     while True:
         body = {"query": query_vendas_shopify(), "variables": {"cursor": cursor, "search": search_str}}
+
+        t0 = time.time()
         resp = sess.post(url, json=body, headers=headers, timeout=DEFAULT_TIMEOUT)
+        dur = round(time.time() - t0, 3)
+
         if resp.status_code == 429:
-            time.sleep(int(resp.headers.get("Retry-After", "2")))
+            ra = resp.headers.get("Retry-After")
+            logger.warning(
+                "graphql_http_429",
+                extra={"retry_after_s": float(ra) if ra and ra.isdigit() else None, "duration_s": dur},
+            )
+            _sleep_throttle(float(ra) if ra and ra.isdigit() else backoff)
+            backoff = min(backoff * _GRAPHQL_BACKOFF_MULT, _GRAPHQL_BACKOFF_MAX)
             continue
+
         resp.raise_for_status()
-        payload = cast(dict[str, Any], resp.json())
+        payload = cast(dict[str, Any], resp.json() or {})
 
-        if payload.get("errors"):
-            raise RuntimeError(str(payload["errors"]))
+        errors = payload.get("errors") or []
+        if errors:
+            throttled = any("throttled" in str(e.get("message", "")).lower() for e in errors)
+            wait, metrics = _throttle_from_extensions(payload)
+            if throttled:
+                logger.info(
+                    "graphql_throttled",
+                    extra={"duration_s": dur, "wait_s": round(wait, 3), **metrics, "pagina": pagina},
+                )
+                _sleep_throttle(wait if wait > 0 else backoff)
+                backoff = min(backoff * _GRAPHQL_BACKOFF_MULT, _GRAPHQL_BACKOFF_MAX)
+                continue
+            logger.error("graphql_errors", extra={"errors": errors, "duration_s": dur, "pagina": pagina})
+            raise RuntimeError(str(errors))
 
+        # sucesso → reseta backoff
+        backoff = _GRAPHQL_BACKOFF_MIN
         data = cast(dict[str, Any], payload.get("data") or {})
         orders = cast(dict[str, Any], data.get("orders") or {})
-        for edge in cast(list[dict[str, Any]], orders.get("edges") or []):
-            node = cast(_Pedido, edge.get("node") or {})
-            yield node
+        edges = cast(list[dict[str, Any]], orders.get("edges") or [])
+        page_info = cast(dict[str, Any], orders.get("pageInfo") or {})
+        has_next = bool(page_info.get("hasNextPage"))
+        end_cursor = page_info.get("endCursor")
 
-        page = cast(dict[str, Any], orders.get("pageInfo") or {})
-        if not page.get("hasNextPage"):
+        logger.info(
+            "graphql_page_ok",
+            extra={
+                "duration_s": dur,
+                "edges": len(edges),
+                "has_next": has_next,
+                "pagina": pagina,
+            },
+        )
+
+        for edge in edges:
+            yield cast(_Pedido, edge.get("node") or {})
+
+        if not has_next:
             break
-        cursor = cast(str | None, page.get("endCursor"))
+        pagina += 1
+        cursor = cast(str | None, end_cursor)
 
 
 # -----------------------------------------------------------------------------
@@ -190,31 +241,57 @@ def _coletar_pedidos_shopify_base(
     *,
     data_inicio: str,
     fulfillment_status: str = "any",
-    sku_produtos: list[str] | None = None,  # filtro opcional por SKUs internos
+    sku_produtos: list[str] | None = None,
 ) -> list[dict[str, Any]]:
+    t0 = time.time()
     search = _parametros_coleta_shopify(data_inicio, fulfillment_status)
     skus_info = cast(Mapping[str, Mapping[str, Any]], carregar_skus())
-
     modo_fs = (fulfillment_status or "any").strip().lower()
     sku_filter = {s.strip().upper() for s in (sku_produtos or []) if s.strip()}
+
+    logger.info(
+        "coleta_inicio",
+        extra={
+            "data_inicio": data_inicio,
+            "fulfillment_status": modo_fs,
+            "sku_filter": sorted(list(sku_filter)) if sku_filter else None,
+        },
+    )
+
+    total_pedidos = 0
+    total_linhas = 0
     linhas: list[dict[str, Any]] = []
 
     for pedido in _paginacao_vendas_shopify(search):
-        # use o nome consistente que você tiver exportado (ex.: do shopify_common)
-        remaining = _coletar_remaining_lineitems(pedido)  # ou coletar_remaining_por_line(pedido)
+        total_pedidos += 1
+        remaining = _coletar_remaining_lineitems(pedido)  # ou coletar_remaining_por_line
+        # monta linhas do pedido
         linhas_pedido = _linhas_por_pedido(
             pedido=pedido,
             modo_fs=modo_fs,
-            produto_alvo=None,  # não filtramos por nome
+            produto_alvo=None,
             skus_info=skus_info,
             remaining_por_line=remaining,
         )
-        # filtro por SKU, se houver
         if sku_filter:
-            linhas.extend(l for l in linhas_pedido if str(l.get("SKU", "")).strip().upper() in sku_filter)
-        else:
-            linhas.extend(linhas_pedido)
+            linhas_pedido = [l for l in linhas_pedido if str(l.get("SKU", "")).strip().upper() in sku_filter]
+        linhas.extend(linhas_pedido)
+        total_linhas += len(linhas_pedido)
 
+        if total_pedidos % 10 == 0:
+            logger.info(
+                "coleta_parcial",
+                extra={"pedidos_processados": total_pedidos, "linhas_acumuladas": total_linhas},
+            )
+
+    logger.info(
+        "coleta_fim",
+        extra={
+            "pedidos_processados": total_pedidos,
+            "linhas_total": total_linhas,
+            "duration_s": round(time.time() - t0, 3),
+        },
+    )
     return linhas
 
 
@@ -222,37 +299,69 @@ def coletar_vendas_shopify(
     *,
     data_inicio: str,
     fulfillment_status: str = "any",
-    sku_produtos: list[str] | None = None,  # filtro por SKUs
-    enrich_cpfs: bool = True,  # sempre True
-    enrich_bairros: bool = True,  # sempre True
-    enrich_enderecos: bool = True,  # sempre True
+    sku_produtos: list[str] | None = None,
+    enrich_cpfs: bool = True,
+    enrich_bairros: bool = True,
+    enrich_enderecos: bool = True,
     use_ai_enderecos: bool = True,
     ai_provider: Callable[[str], Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, int]]]:
-
+    t0 = time.time()
     linhas = _coletar_pedidos_shopify_base(
         data_inicio=data_inicio,
         fulfillment_status=fulfillment_status,
         sku_produtos=sku_produtos,
     )
 
-    # enriquecimentos sempre ligados
+    # bairros
     if linhas and enrich_bairros:
+        tb = time.time()
+        antes = sum(1 for l in linhas if not str(l.get("Bairro Comprador", "")).strip())
         enriquecer_bairros_nas_linhas(linhas)
+        depois = sum(1 for l in linhas if not str(l.get("Bairro Comprador", "")).strip())
+        logger.info(
+            "enrich_bairros_ok",
+            extra={"pre_vazios": antes, "pos_vazios": depois, "duration_s": round(time.time() - tb, 3)},
+        )
 
+    # endereços
     if linhas and enrich_enderecos:
+        te = time.time()
+        faltavam_num = sum(1 for l in linhas if not str(l.get("Número Entrega", "")).strip())
         normalizar_enderecos_batch(linhas, ai_provider=ai_provider if use_ai_enderecos else None)
+        ainda_faltam_num = sum(1 for l in linhas if not str(l.get("Número Entrega", "")).strip())
+        logger.info(
+            "enrich_enderecos_ok",
+            extra={
+                "pre_sem_num": faltavam_num,
+                "pos_sem_num": ainda_faltam_num,
+                "duration_s": round(time.time() - te, 3),
+            },
+        )
 
+    # CPFs
     if linhas and enrich_cpfs:
+        tc = time.time()
         pendentes = {
             str(l.get("transaction_id", "")).strip() for l in linhas if not str(l.get("CPF/CNPJ Comprador", "")).strip()
         }
         pendentes = {p for p in pendentes if p}
+        count_in = len(pendentes)
+        mapa = {}
         if pendentes:
-            # use o nome correto da sua função de CPF (ajuste se for obter_cpfs_bulk)
-            mapa = obter_cpfs_pedidos_shopify(pendentes)
+            mapa = obter_cpfs_pedidos_shopify(pendentes)  # use o nome correto no seu módulo
             if mapa:
                 enriquecer_cpfs_nas_linhas(linhas, mapa)
+        count_out = sum(1 for l in linhas if not str(l.get("CPF/CNPJ Comprador", "")).strip())
+        logger.info(
+            "enrich_cpfs_ok",
+            extra={
+                "pendentes_in": count_in,
+                "pendentes_out": count_out,
+                "encontrados": len(mapa or {}),
+                "duration_s": round(time.time() - tc, 3),
+            },
+        )
 
     # contagens finais
     cont_status: dict[str, int] = {}
@@ -264,4 +373,8 @@ def coletar_vendas_shopify(
         if prod:
             cont_prod[prod] = cont_prod.get(prod, 0) + 1
 
+    logger.info(
+        "coleta_total_ok",
+        extra={"linhas": len(linhas), "duration_s": round(time.time() - t0, 3)},
+    )
     return linhas, {"status_fulfillment": cont_status, "produto": cont_prod}
