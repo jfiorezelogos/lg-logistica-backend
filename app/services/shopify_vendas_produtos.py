@@ -13,9 +13,13 @@ from utils.utils_helpers import _normalizar_order_id
 from app.common.http_client import DEFAULT_TIMEOUT, get_session
 from app.common.settings import settings
 from app.schemas.shopify_vendas_produtos import _Pedido
+from app.services.bling_planilha_shopify import (
+    _linhas_por_pedido,
+    enriquecer_bairros_nas_linhas,
+    enriquecer_cpfs_nas_linhas,
+)
 from app.services.loader_main import carregar_skus
 from app.services.shopify_normalizar_gpt import normalizar_enderecos_batch
-from app.services.shopify_planilha import _linhas_por_pedido, enriquecer_bairros_nas_linhas, enriquecer_cpfs_nas_linhas
 
 from .shopify_client import _graphql_url, _http_shopify_headers
 
