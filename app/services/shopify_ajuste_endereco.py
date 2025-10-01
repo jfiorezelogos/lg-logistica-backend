@@ -1,13 +1,16 @@
+from __future__ import annotations
+
 import json
 import re
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Any, TypedDict
 
 from app.schemas.shopify_vendas_produtos import ShopifyEnderecoResultado
 from app.services.shopify_busca_bairro import buscar_cep_com_timeout
 from app.utils.utils_helpers import (
     _normalizar_order_id,
     logger,
+    normalizar_texto,
 )
 
 _BRASILIENSE_KEYS = ("SQS", "SQN", "SHIN", "SHIS", "SCLN", "SGAN", "SGAS", "SMLN", "SMAS")
@@ -28,9 +31,10 @@ def _is_brasilia_exception(city: str, uf: str, endereco_base: str) -> bool:
 # Enriquecimento: Parser/Normalização de endereço (+ LLM opcional)
 # -----------------------------------------------------------------------------
 
-_numero_pat = re.compile(r"(?:^|\s|,|-)N(?:º|o|\.)?\s*(\d+)\b", flags=re.IGNORECASE)
+_numero_pat = re.compile(r"(?:^|\s|,|-)N(?:º|o|\.)?\s*(\d+[A-Za-z]?)\b", flags=re.IGNORECASE)  # CHANGE: permite sufixo letra
 _fim_numero_pat = re.compile(
-    r"\b(\d{1,6})(?:\s*(?:,|-|\s|apt\.?|apto\.?|bloco|casa|fundos|frente|sl|cj|q|qs)\b.*)?$",
+    r"\b(\d{1,6}[A-Za-z]?)"  # CHANGE: permite 1 letra após o número
+    r"(?:\s*(?:,|-|\s|apt\.?|apto\.?|bloco|casa|fundos|frente|sl|cj|q|qs)\b.*)?$",
     re.IGNORECASE,
 )
 
@@ -48,6 +52,23 @@ def registrar_log_norm_enderecos(order_id: str, resultado: Mapping[str, Any]) ->
         )
     except Exception:
         logger.info("addr_norm_result", extra={"order_id": order_id})
+
+
+def _remove_bairro_do_complemento(complemento: str, bairro_cep: str) -> str:
+    if not complemento or not bairro_cep:
+        return complemento or ""
+    # remove ocorrência insensível e limpa separadores residuais
+    comp = re.sub(re.escape(bairro_cep), "", complemento, flags=re.IGNORECASE)
+    comp = re.sub(r"\s{2,}", " ", comp).strip(" ,-/")
+    return comp
+
+
+def _limpa_dup_base_no_complemento(complemento: str, base: str) -> str:
+    if not complemento or not base:
+        return complemento or ""
+    comp = re.sub(re.escape(base), "", complemento, flags=re.IGNORECASE)
+    comp = re.sub(r"\s{2,}", " ", comp).strip(" ,-/")
+    return comp
 
 
 def _parse_endereco(address1: str, address2: str = "") -> dict[str, str]:
@@ -91,48 +112,14 @@ def parse_enderecos(enderecos: list[dict[str, str]]) -> dict[str, dict[str, str]
     return out
 
 
-def normalizar_enderecos_batch(
-    linhas: list[dict[str, Any]],
-    *,
-    ai_provider: Callable[[str], Any] | None = None,
-) -> None:
-    for l in linhas:
-        address1 = str(l.get("Endereço Entrega") or l.get("Endereço Comprador") or "")
-        address2 = str(l.get("Complemento Entrega") or l.get("Complemento Comprador") or "")
-        numero_existente = str(l.get("Número Entrega") or l.get("Número Comprador") or "")
-        if numero_existente and address1:
-            continue
-        cep = str(l.get("CEP Entrega") or l.get("CEP Comprador") or "")
-        res = normalizar_endereco_unico(
-            order_id=str(l.get("transaction_id", "")),
-            address1=address1,
-            address2=address2,
-            cep=cep,
-            ai_provider=ai_provider,
-        )
-        l["Endereço Comprador"] = res["endereco_base"]
-        l["Número Comprador"] = res["numero"]
-        l["Complemento Comprador"] = res["complemento"]
-        l["Endereço Entrega"] = res["endereco_base"]
-        l["Número Entrega"] = res["numero"]
-        l["Complemento Entrega"] = res["complemento"]
-        l["Precisa Contato"] = res["precisa_contato"]
-        if res.get("bairro_oficial") and not str(l.get("Bairro Entrega", "")).strip():
-            l["Bairro Entrega"] = res["bairro_oficial"]
-
-
-def parse_enderecos_batch(enderecos: list[dict[str, str]]) -> dict[str, dict[str, str]]:
-    return parse_enderecos(enderecos)
-
-
-def _montar_prompt_gpt(address1: str, address2: str, logradouro_cep: str, bairro_cep: str) -> str:
+def _montar_prompt_gpt(address1: str, address2: str, logradouro_cep: str, bairro_cep: str, cidade_cep: str, uf_cep: str) -> str:  # CHANGE: inclui cidade/UF
     return f"""
 Responda com um JSON contendo:
 
 - base: nome oficial da rua (logradouro). Use `logradouro_cep` se existir. Caso contrário, extraia de `address1`.
 - numero: número do imóvel. Deve ser um número puro (ex: "123") ou número com uma única letra (ex: "456B"). Use "s/n" se não houver número claro. O número deve aparecer logo após o nome da rua. **Nunca inclua bairros, nomes de edifícios, siglas ou outras palavras no número.**
 - complemento: tudo que estiver em `address1` e `address2` que **não seja** o `base`, o `numero` ou o `bairro_cep`.
-- precisa_contato: true apenas se `numero` for "s/n" e o cep nao for de Brasília-DF
+- precisa_contato: true apenas se `numero` for "s/n" **e** não for Brasília-DF.
 
 Regras importantes:
 - Nunca repita `base` no `complemento`.
@@ -145,6 +132,8 @@ address1: {address1}
 address2: {address2}
 logradouro_cep: {logradouro_cep}
 bairro_cep: {bairro_cep}
+cidade_cep: {cidade_cep}
+uf_cep: {uf_cep}
 
 Formato de resposta:
 {{"base": "...", "numero": "...", "complemento": "...", "precisa_contato": false}}
@@ -157,11 +146,13 @@ def normalizar_enderecos_gpt(
     address2: str,
     logradouro_cep: str,
     bairro_cep: str,
+    cidade_cep: str,   # CHANGE: passa cidade/UF para o prompt
+    uf_cep: str,
     ai_provider: Callable[[str], Any] | None = None,
 ) -> dict[str, Any]:
     if ai_provider is None:
         return {}
-    prompt = _montar_prompt_gpt(address1, address2, logradouro_cep, bairro_cep)
+    prompt = _montar_prompt_gpt(address1, address2, logradouro_cep, bairro_cep, cidade_cep, uf_cep)
     resp = ai_provider(prompt)
     if isinstance(resp, dict):
         return resp
@@ -202,7 +193,7 @@ def normalizar_endereco_unico(
     base = parsed.get("endereco_base", "").strip(" ,-/")
     numero = (parsed.get("numero") or "").strip()
     complemento = (parsed.get("complemento") or "").strip()
-    precisa = parsed.get("precisa_contato") == "SIM"
+    precisa = (parsed.get("precisa_contato") == "SIM")
 
     # 2.1) se não achou número, padronize para "s/n"
     if not numero:
@@ -211,24 +202,18 @@ def normalizar_endereco_unico(
 
     # 2.2) privilegie logradouro oficial do CEP quando existir
     if logradouro_cep:
-        # Evite duplicidade de base no complemento
         if base and logradouro_cep and base.lower() != logradouro_cep.lower():
-            # mantém base como oficial do CEP
             base = logradouro_cep.strip()
-            # se complemento tinha a mesma base, limpe
-            complemento = complemento.replace(logradouro_cep, "").strip(" ,-/")
+            complemento = _limpa_dup_base_no_complemento(complemento, logradouro_cep)  # CHANGE: limpa base do complemento
 
     # 2.3) Nunca incluir bairro no complemento
     if bairro_cep and bairro_cep.lower() in complemento.lower():
-        complemento = re.sub(re.escape(bairro_cep), "", complemento, flags=re.IGNORECASE).strip(" ,-/")
+        complemento = _remove_bairro_do_complemento(complemento, bairro_cep)  # CHANGE: sanitização consistente
 
     # 3) Exceção Brasília/DF: se numero == "s/n" e for Brasília, NÃO precisa contato
     if numero.lower() in {"s/n", "sn", "s-n"}:
         if _is_brasilia_exception(cidade_cep, uf_cep, base):
             precisa = False
-        else:
-            # ainda podemos tentar IA antes de concluir
-            pass
 
     # 4) Fallback IA apenas se ainda estamos sem número real e provider ligado
     if numero.lower() in {"s/n", "sn", "s-n"} and ai_provider is not None:
@@ -237,6 +222,8 @@ def normalizar_endereco_unico(
             address2=address2,
             logradouro_cep=logradouro_cep,
             bairro_cep=bairro_cep,
+            cidade_cep=cidade_cep,  # CHANGE
+            uf_cep=uf_cep,          # CHANGE
             ai_provider=ai_provider,
         )
         if resp:
@@ -253,7 +240,7 @@ def normalizar_endereco_unico(
             if base_ai:
                 base = logradouro_cep.strip() if logradouro_cep else base_ai
             if comp_ai:
-                complemento = comp_ai
+                complemento = _limpa_dup_base_no_complemento(comp_ai, base)  # CHANGE: remove duplicidade
 
             # se continuou s/n, reavalie exceção DF
             if numero.lower() in {"s/n", "sn", "s-n"}:
