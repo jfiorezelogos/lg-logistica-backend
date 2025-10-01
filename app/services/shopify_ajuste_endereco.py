@@ -4,12 +4,25 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from app.schemas.shopify_vendas_produtos import ShopifyEnderecoResultado
-from app.services.viacep_client import buscar_cep_com_timeout
+from app.services.shopify_busca_bairro import buscar_cep_com_timeout
 from app.utils.utils_helpers import (
     _normalizar_order_id,
     logger,
-    normalizar_texto,
 )
+
+_BRASILIENSE_KEYS = ("SQS", "SQN", "SHIN", "SHIS", "SCLN", "SGAN", "SGAS", "SMLN", "SMAS")
+
+
+def _is_brasilia_exception(city: str, uf: str, endereco_base: str) -> bool:
+    uf = (uf or "").strip().upper()
+    city_norm = (city or "").strip().lower()
+    if uf != "DF":
+        return False
+    if "brasília" in city_norm or "brasilia" in city_norm:
+        return True
+    up = (endereco_base or "").upper()
+    return any(k in up for k in _BRASILIENSE_KEYS)
+
 
 # -----------------------------------------------------------------------------
 # Enriquecimento: Parser/Normalização de endereço (+ LLM opcional)
@@ -167,61 +180,93 @@ def normalizar_endereco_unico(
     ai_provider: Callable[[str], Any] | None = None,
 ) -> ShopifyEnderecoResultado:
     pedido_id = _normalizar_order_id(order_id)
+
+    # 1) CEP → logradouro/bairro/cidade/UF (para regra Brasília/DF e logradouro preferencial)
+    cep_info = {}
     logradouro_cep = ""
     bairro_cep = ""
-
+    cidade_cep = ""
+    uf_cep = ""
     if cep:
         try:
-            cep_info = buscar_cep_com_timeout(cep)
+            cep_info = buscar_cep_com_timeout(cep) or {}
             logradouro_cep = str(cep_info.get("street") or "")
             bairro_cep = str(cep_info.get("district") or "")
+            cidade_cep = str(cep_info.get("city") or "")
+            uf_cep = str(cep_info.get("uf") or "")
         except Exception as e:
             logger.error("addr_norm_cep_error", extra={"order_id": pedido_id, "err": str(e)})
 
-    precisa = False
-    base = ""
-    numero = ""
-    complemento = (address2 or "").strip()
+    # 2) PRIMEIRO: parser determinístico por regex
+    parsed = _parse_endereco(address1, address2)  # {"endereco_base","numero","complemento","precisa_contato"}
+    base = parsed.get("endereco_base", "").strip(" ,-/")
+    numero = (parsed.get("numero") or "").strip()
+    complemento = (parsed.get("complemento") or "").strip()
+    precisa = parsed.get("precisa_contato") == "SIM"
 
-    if validar_endereco(address1):
-        partes = [p.strip() for p in (address1 or "").split(",", 1)]
-        base = partes[0]
-        numero = (partes[1] if len(partes) > 1 else "").strip() or "s/n"
-        precisa = numero == "s/n"
-    else:
-        resposta = normalizar_enderecos_gpt(
+    # 2.1) se não achou número, padronize para "s/n"
+    if not numero:
+        numero = "s/n"
+        precisa = True
+
+    # 2.2) privilegie logradouro oficial do CEP quando existir
+    if logradouro_cep:
+        # Evite duplicidade de base no complemento
+        if base and logradouro_cep and base.lower() != logradouro_cep.lower():
+            # mantém base como oficial do CEP
+            base = logradouro_cep.strip()
+            # se complemento tinha a mesma base, limpe
+            complemento = complemento.replace(logradouro_cep, "").strip(" ,-/")
+
+    # 2.3) Nunca incluir bairro no complemento
+    if bairro_cep and bairro_cep.lower() in complemento.lower():
+        complemento = re.sub(re.escape(bairro_cep), "", complemento, flags=re.IGNORECASE).strip(" ,-/")
+
+    # 3) Exceção Brasília/DF: se numero == "s/n" e for Brasília, NÃO precisa contato
+    if numero.lower() in {"s/n", "sn", "s-n"}:
+        if _is_brasilia_exception(cidade_cep, uf_cep, base):
+            precisa = False
+        else:
+            # ainda podemos tentar IA antes de concluir
+            pass
+
+    # 4) Fallback IA apenas se ainda estamos sem número real e provider ligado
+    if numero.lower() in {"s/n", "sn", "s-n"} and ai_provider is not None:
+        resp = normalizar_enderecos_gpt(
             address1=address1,
             address2=address2,
             logradouro_cep=logradouro_cep,
             bairro_cep=bairro_cep,
             ai_provider=ai_provider,
         )
-        if not resposta:
-            parsed = _parse_endereco(address1, address2)
-            base = parsed["endereco_base"]
-            numero = parsed["numero"]
-            complemento = parsed["complemento"]
-            precisa = parsed["precisa_contato"] == "SIM"
-        else:
-            base = str(resposta.get("base", "") or "").strip()
-            numero = str(resposta.get("numero", "") or "").strip()
-            if not re.match(r"^\d+[A-Za-z]?$", numero):
-                numero = "s/n"
-                precisa = True
-            comp_resp = str(resposta.get("complemento", "") or address2 or "").strip()
-            complemento = "" if comp_resp.strip() == numero.strip() else comp_resp
-            precisa = bool(resposta.get("precisa_contato", precisa))
-            if logradouro_cep:
-                base_norm = normalizar_texto(base)
-                log_norm = normalizar_texto(logradouro_cep)
-                if log_norm not in base_norm:
-                    base = logradouro_cep.strip()
+        if resp:
+            base_ai = str(resp.get("base", "") or "").strip()
+            num_ai = str(resp.get("numero", "") or "").strip()
+            comp_ai = str(resp.get("complemento", "") or "").strip()
+            precisa_ai = bool(resp.get("precisa_contato", precisa))
+
+            # valida número (apenas dígitos com opcional 1 letra)
+            if re.match(r"^\d+[A-Za-z]?$", num_ai or ""):
+                numero = num_ai
+                precisa = precisa_ai
+            # base: prioriza logradouro do CEP quando existir
+            if base_ai:
+                base = logradouro_cep.strip() if logradouro_cep else base_ai
+            if comp_ai:
+                complemento = comp_ai
+
+            # se continuou s/n, reavalie exceção DF
+            if numero.lower() in {"s/n", "sn", "s-n"}:
+                if _is_brasilia_exception(cidade_cep, uf_cep, base):
+                    precisa = False
+                else:
+                    precisa = True
 
     out: ShopifyEnderecoResultado = {
-        "endereco_base": base,
+        "endereco_base": base or (address1 or "").strip(),
         "numero": numero or "s/n",
         "complemento": complemento,
-        "precisa_contato": "SIM" if precisa else "NÃO",
+        "precisa_contato": "NÃO" if not precisa else "SIM",
         "logradouro_oficial": logradouro_cep,
         "bairro_oficial": bairro_cep,
         "raw_address1": address1 or "",

@@ -4,7 +4,7 @@ import logging
 import re
 import threading
 import time
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Iterable, Mapping
 from datetime import datetime
 from typing import Any, cast
 
@@ -12,9 +12,9 @@ from app.common.http_client import DEFAULT_TIMEOUT, get_session
 from app.common.settings import settings
 from app.schemas.shopify_vendas_produtos import ShopifyPedido
 from app.services.bling_planilha_shopify import (
-    _ajustar_enderecos_local,
-    _enriquecer_bairros_local,
     _linhas_por_pedido,
+    enriquecer_bairros_nas_linhas,
+    enriquecer_enderecos_nas_linhas,
 )
 from app.services.loader_main import carregar_skus
 from app.utils.throttlers import (
@@ -330,50 +330,66 @@ def coletar_vendas_shopify(
     enrich_cpfs: bool = True,
     enrich_bairros: bool = True,
     enrich_enderecos: bool = True,
-    _use_ai_enderecos: bool = False,  # forçamos heurística local por padrão
-    _ai_provider: Callable[[str], Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, int]]]:
     t0 = time.time()
 
-    # 1) COLETAR (CPF já injetado na base)
+    # 1) COLETAR (CPF já injetado na base quando disponível no payload)
     linhas = _coletar_pedidos_shopify_base(
         data_inicio=data_inicio,
         fulfillment_status=fulfillment_status,
         sku_produtos=sku_produtos,
     )
 
-    # 2) ENRIQUECER CPF — já feito na coleta; mantemos apenas para contabilidade (sem rede)
-    if linhas and enrich_cpfs:
-        pendentes_out = sum(1 for l in linhas if not str(l.get("CPF/CNPJ Comprador", "")).strip())
-        logger.info("enrich_cpfs_ok", extra={"pendentes_out": pendentes_out})
-
-    # 3) ENRIQUECER BAIRROS — apenas heurística local
-    if linhas and enrich_bairros:
-        tb = time.time()
-        antes = sum(1 for l in linhas if not str(l.get("Bairro Comprador", "")).strip())
-        _enriquecer_bairros_local(linhas)
-        depois = sum(1 for l in linhas if not str(l.get("Bairro Comprador", "")).strip())
-        logger.info(
-            "enrich_bairros_ok",
-            extra={"pre_vazios": antes, "pos_vazios": depois, "duration_s": round(time.time() - tb, 3)},
-        )
-
-    # 4) AJUSTAR ENDEREÇOS — determinístico, sem IA/lookup
+    # 2) NORMALIZAR ENDEREÇOS — determinístico; escreve "s/n" e "Precisa Contato"
+    #    (com exceção Brasília/DF) e não promove complemento para bairro.
     if linhas and enrich_enderecos:
         te = time.time()
-        faltavam_num = sum(1 for l in linhas if not str(l.get("Número Entrega", "")).strip())
-        _ajustar_enderecos_local(linhas)
-        ainda_faltam_num = sum(1 for l in linhas if not str(l.get("Número Entrega", "")).strip())
+        pre_sem_num = sum(1 for l in linhas if not str(l.get("Número Entrega", "")).strip())
+        enriquecer_enderecos_nas_linhas(linhas)  # <- usa shopify_ajuste_endereco
+        pos_sem_num = sum(1 for l in linhas if not str(l.get("Número Entrega", "")).strip())
         logger.info(
             "enrich_enderecos_ok",
             extra={
-                "pre_sem_num": faltavam_num,
-                "pos_sem_num": ainda_faltam_num,
+                "pre_sem_num": pre_sem_num,
+                "pos_sem_num": pos_sem_num,
                 "duration_s": round(time.time() - te, 3),
             },
         )
 
-    # contagens finais
+    # 3) ENRIQUECER BAIRROS — via brazilcep por CEP (Entrega/Comprador), sem sobrescrever quem já tem.
+    if linhas and enrich_bairros:
+        tb = time.time()
+        pre_vazios = sum(
+            1
+            for l in linhas
+            if (not str(l.get("Bairro Comprador", "")).strip()) or (not str(l.get("Bairro Entrega", "")).strip())
+        )
+        enriquecer_bairros_nas_linhas(
+            linhas,
+            usar_cep_entrega=True,
+            usar_cep_comprador=True,
+            timeout=5,
+        )  # <- usa shopify_busca_bairro
+        pos_vazios = sum(
+            1
+            for l in linhas
+            if (not str(l.get("Bairro Comprador", "")).strip()) or (not str(l.get("Bairro Entrega", "")).strip())
+        )
+        logger.info(
+            "enrich_bairros_ok",
+            extra={
+                "pre_vazios": pre_vazios,
+                "pos_vazios": pos_vazios,
+                "duration_s": round(time.time() - tb, 3),
+            },
+        )
+
+    # 4) ENRIQUECER CPF — já veio no passo de coleta; mantemos log/contabilidade
+    if linhas and enrich_cpfs:
+        pendentes_out = sum(1 for l in linhas if not str(l.get("CPF/CNPJ Comprador", "")).strip())
+        logger.info("enrich_cpfs_ok", extra={"pendentes_out": pendentes_out})
+
+    # Contagens finais
     cont_status: dict[str, int] = {}
     cont_prod: dict[str, int] = {}
     for l in linhas:
@@ -383,5 +399,8 @@ def coletar_vendas_shopify(
         if prod:
             cont_prod[prod] = cont_prod.get(prod, 0) + 1
 
-    logger.info("coleta_total_ok", extra={"linhas": len(linhas), "duration_s": round(time.time() - t0, 3)})
+    logger.info(
+        "coleta_total_ok",
+        extra={"linhas": len(linhas), "duration_s": round(time.time() - t0, 3)},
+    )
     return linhas, {"status_fulfillment": cont_status, "produto": cont_prod}
