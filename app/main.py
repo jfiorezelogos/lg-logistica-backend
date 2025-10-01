@@ -1,6 +1,10 @@
 # app/main.py
 from __future__ import annotations
 
+import logging
+import os
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -14,15 +18,37 @@ from app.routers.guru_vendas_produtos import router as guru_vendas_produtos_rout
 from app.routers.shopify_produtos import router as shopify_produtos_router
 from app.routers.shopify_vendas_produtos import router as shopify_vendas_router
 
-app = FastAPI(title="LG Logística v2 - Backend")
-
+# ----------------------------------------------------------------------
 # Logging
+# ----------------------------------------------------------------------
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+LOG_DIR = Path("logs")
+LOG_DIR.mkdir(exist_ok=True)
+
+logging.basicConfig(
+    level=LOG_LEVEL,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[
+        logging.StreamHandler(),                    # console
+        logging.FileHandler(LOG_DIR / "app.log"),   # arquivo
+    ],
+)
+logger = logging.getLogger(__name__)
+logger.info("Inicializando LG Logística v2...")
+
+# ----------------------------------------------------------------------
+# FastAPI app
+# ----------------------------------------------------------------------
+app = FastAPI(title="API LG Logística v2")
+
+# Middleware de request-id
 app.add_middleware(RequestIdMiddleware)
 
-# ✅ CORS — importante para Swagger e integrações com front-ends
+# ✅ CORS — em produção restrinja a origens confiáveis
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # em produção restrinja: ["http://localhost:3000", "https://meusite.com"]
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -37,7 +63,6 @@ app.include_router(shopify_produtos_router)
 app.include_router(regras_router)
 app.include_router(catalogo_router)
 app.include_router(guru_importar_planilha_router)
-
 
 # ✅ rota de saúde simples
 @app.get("/health", tags=["Health"])

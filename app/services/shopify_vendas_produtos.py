@@ -307,10 +307,12 @@ def coletar_vendas_shopify(
     ai_provider: Callable[[str], Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, int]]]:
     t0 = time.time()
+
+    # ✅ usar o nome correto do parâmetro ao chamar a base
     linhas = _coletar_pedidos_shopify_base(
         data_inicio=data_inicio,
         fulfillment_status=fulfillment_status,
-        sku_produtos=sku_produtos,
+        sku_produtos=sku_produtos,   # <-- antes estava "skus"
     )
 
     # bairros
@@ -343,22 +345,27 @@ def coletar_vendas_shopify(
     if linhas and enrich_cpfs:
         tc = time.time()
         pendentes = {
-            str(l.get("transaction_id", "")).strip() for l in linhas if not str(l.get("CPF/CNPJ Comprador", "")).strip()
+            str(l.get("transaction_id", "")).strip()
+            for l in linhas
+            if not str(l.get("CPF/CNPJ Comprador", "")).strip()
         }
         pendentes = {p for p in pendentes if p}
         count_in = len(pendentes)
-        mapa = {}
+
+        mapa: dict[str, str] = {}
         if pendentes:
-            mapa = obter_cpfs_pedidos_shopify(pendentes)  # use o nome correto no seu módulo
+            # ✅ alinhar com o nome do helper real (troque se o seu for diferente)
+            mapa = obter_cpfs_pedidos_shopify(pendentes)
             if mapa:
                 enriquecer_cpfs_nas_linhas(linhas, mapa)
+
         count_out = sum(1 for l in linhas if not str(l.get("CPF/CNPJ Comprador", "")).strip())
         logger.info(
             "enrich_cpfs_ok",
             extra={
                 "pendentes_in": count_in,
                 "pendentes_out": count_out,
-                "encontrados": len(mapa or {}),
+                "encontrados": len(mapa),
                 "duration_s": round(time.time() - tc, 3),
             },
         )
