@@ -2,18 +2,106 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable, Mapping
-from typing import Any, TypedDict
+from collections.abc import Callable, Iterable, Mapping
+from functools import lru_cache
+from typing import Any
+
+from brazilcep import exceptions as br_ex, get_address_from_cep
 
 from app.schemas.shopify_vendas_produtos import ShopifyEnderecoResultado
-from app.services.shopify_busca_bairro import buscar_cep_com_timeout
 from app.utils.utils_helpers import (
     _normalizar_order_id,
-    logger,
-    normalizar_texto,
+    logger,  # mantido se outros módulos usarem; ok permanecer importado
 )
 
+# =============================================================================
+# Constantes / padrões
+# =============================================================================
+
 _BRASILIENSE_KEYS = ("SQS", "SQN", "SHIN", "SHIS", "SCLN", "SGAN", "SGAS", "SMLN", "SMAS")
+_CEP_RE = re.compile(r"\d{5}-?\d{3}")
+
+# Número (com sufixo opcional em letra) e captura no fim da linha
+_numero_pat = re.compile(r"(?:^|\s|,|-)N(?:º|o|\.)?\s*(\d+[A-Za-z]?)\b", flags=re.IGNORECASE)
+_fim_numero_pat = re.compile(
+    r"\b(\d{1,6}[A-Za-z]?)" r"(?:\s*(?:,|-|\s|apt\.?|apto\.?|bloco|casa|fundos|frente|sl|cj|q|qs)\b.*)?$",
+    re.IGNORECASE,
+)
+
+# =============================================================================
+# Utilidades de CEP (consulta unitária e em lote)
+# =============================================================================
+
+
+def _limpa_cep(cep: str | None) -> str:
+    """Mantém apenas dígitos e corta para 8 (formato ViaCEP)."""
+    return re.sub(r"\D", "", str(cep or ""))[:8]
+
+
+@lru_cache(maxsize=4096)
+def _buscar_endereco_cached(cep8: str, timeout: int = 5) -> dict[str, Any]:
+    """
+    Busca endereço no brazilcep para um CEP de 8 dígitos.
+    Retorna sempre um dict (pode ser {} em caso de erro/CEP inexistente).
+    OBS: timeout participa da chave do cache (está na assinatura).
+    """
+    if not cep8 or len(cep8) != 8:
+        return {}
+    try:
+        data = get_address_from_cep(cep8, timeout=timeout) or {}
+        # Normaliza chaves esperadas
+        return {
+            "street": str(data.get("street") or "").strip(),
+            "district": str(data.get("district") or "").strip(),
+            "city": str(data.get("city") or data.get("localidade") or "").strip(),
+            "uf": str(data.get("state") or data.get("uf") or "").strip(),
+            "cep": cep8,
+        }
+    except br_ex.CEPNotFound:
+        # CEP não encontrado
+        return {}
+    except Exception:
+        # Qualquer outra falha de rede/parse
+        return {}
+
+
+def buscar_cep_com_timeout(cep: str, timeout: int = 5) -> dict[str, Any]:
+    """Consulta um CEP com timeout usando brazilcep. Retorna {} em caso de erro."""
+    cep8 = _limpa_cep(cep)
+    return _buscar_endereco_cached(cep8, timeout=timeout) if len(cep8) == 8 else {}
+
+
+def obter_bairros_por_cep(ceps: Iterable[str], timeout: int = 5) -> tuple[dict[str, str], dict[str, str]]:
+    """
+    Retorna (mapa_bairros, mapa_logradouros) por CEP usando brazilcep.
+    - Dedupe automático de CEPs.
+    - Usa cache interno (_buscar_endereco_cached) para evitar chamadas repetidas.
+    """
+    bairros: dict[str, str] = {}
+    logs: dict[str, str] = {}
+
+    seen: set[str] = set()
+    for c in ceps:
+        cep8 = _limpa_cep(c)
+        if len(cep8) != 8 or cep8 in seen:
+            continue
+        seen.add(cep8)
+
+        data = _buscar_endereco_cached(cep8, timeout=timeout)
+        if not data:
+            continue
+
+        if data.get("district"):
+            bairros[cep8] = data["district"]
+        if data.get("street"):
+            logs[cep8] = data["street"]
+
+    return bairros, logs
+
+
+# =============================================================================
+# Normalização de endereço (determinística + opcional via IA)
+# =============================================================================
 
 
 def _is_brasilia_exception(city: str, uf: str, endereco_base: str) -> bool:
@@ -27,20 +115,8 @@ def _is_brasilia_exception(city: str, uf: str, endereco_base: str) -> bool:
     return any(k in up for k in _BRASILIENSE_KEYS)
 
 
-# -----------------------------------------------------------------------------
-# Enriquecimento: Parser/Normalização de endereço (+ LLM opcional)
-# -----------------------------------------------------------------------------
-
-_numero_pat = re.compile(r"(?:^|\s|,|-)N(?:º|o|\.)?\s*(\d+[A-Za-z]?)\b", flags=re.IGNORECASE)  # CHANGE: permite sufixo letra
-_fim_numero_pat = re.compile(
-    r"\b(\d{1,6}[A-Za-z]?)"  # CHANGE: permite 1 letra após o número
-    r"(?:\s*(?:,|-|\s|apt\.?|apto\.?|bloco|casa|fundos|frente|sl|cj|q|qs)\b.*)?$",
-    re.IGNORECASE,
-)
-
-
 def validar_endereco(address1: str) -> bool:
-    # heurística simples: existe algum dígito na linha?
+    """Heurística simples: existe algum dígito na linha?"""
     return bool(re.search(r"\d", address1 or ""))
 
 
@@ -112,7 +188,14 @@ def parse_enderecos(enderecos: list[dict[str, str]]) -> dict[str, dict[str, str]
     return out
 
 
-def _montar_prompt_gpt(address1: str, address2: str, logradouro_cep: str, bairro_cep: str, cidade_cep: str, uf_cep: str) -> str:  # CHANGE: inclui cidade/UF
+def _montar_prompt_gpt(
+    address1: str,
+    address2: str,
+    logradouro_cep: str,
+    bairro_cep: str,
+    cidade_cep: str,
+    uf_cep: str,
+) -> str:
     return f"""
 Responda com um JSON contendo:
 
@@ -146,7 +229,7 @@ def normalizar_enderecos_gpt(
     address2: str,
     logradouro_cep: str,
     bairro_cep: str,
-    cidade_cep: str,   # CHANGE: passa cidade/UF para o prompt
+    cidade_cep: str,
     uf_cep: str,
     ai_provider: Callable[[str], Any] | None = None,
 ) -> dict[str, Any]:
@@ -170,10 +253,14 @@ def normalizar_endereco_unico(
     cep: str | None = None,
     ai_provider: Callable[[str], Any] | None = None,
 ) -> ShopifyEnderecoResultado:
+    """
+    Normaliza um endereço de pedido, combinando heurística determinística + (opcional) IA.
+    Usa CEP para preferir logradouro/bairro oficiais e aplicar exceção Brasília/DF.
+    Retorna um ShopifyEnderecoResultado com campos prontos para o front/integrações.
+    """
     pedido_id = _normalizar_order_id(order_id)
 
     # 1) CEP → logradouro/bairro/cidade/UF (para regra Brasília/DF e logradouro preferencial)
-    cep_info = {}
     logradouro_cep = ""
     bairro_cep = ""
     cidade_cep = ""
@@ -188,12 +275,12 @@ def normalizar_endereco_unico(
         except Exception as e:
             logger.error("addr_norm_cep_error", extra={"order_id": pedido_id, "err": str(e)})
 
-    # 2) PRIMEIRO: parser determinístico por regex
+    # 2) Parser determinístico (regex)
     parsed = _parse_endereco(address1, address2)  # {"endereco_base","numero","complemento","precisa_contato"}
     base = parsed.get("endereco_base", "").strip(" ,-/")
     numero = (parsed.get("numero") or "").strip()
     complemento = (parsed.get("complemento") or "").strip()
-    precisa = (parsed.get("precisa_contato") == "SIM")
+    precisa = parsed.get("precisa_contato") == "SIM"
 
     # 2.1) se não achou número, padronize para "s/n"
     if not numero:
@@ -204,26 +291,26 @@ def normalizar_endereco_unico(
     if logradouro_cep:
         if base and logradouro_cep and base.lower() != logradouro_cep.lower():
             base = logradouro_cep.strip()
-            complemento = _limpa_dup_base_no_complemento(complemento, logradouro_cep)  # CHANGE: limpa base do complemento
+            complemento = _limpa_dup_base_no_complemento(complemento, logradouro_cep)
 
-    # 2.3) Nunca incluir bairro no complemento
+    # 2.3) nunca incluir bairro no complemento
     if bairro_cep and bairro_cep.lower() in complemento.lower():
-        complemento = _remove_bairro_do_complemento(complemento, bairro_cep)  # CHANGE: sanitização consistente
+        complemento = _remove_bairro_do_complemento(complemento, bairro_cep)
 
     # 3) Exceção Brasília/DF: se numero == "s/n" e for Brasília, NÃO precisa contato
     if numero.lower() in {"s/n", "sn", "s-n"}:
         if _is_brasilia_exception(cidade_cep, uf_cep, base):
             precisa = False
 
-    # 4) Fallback IA apenas se ainda estamos sem número real e provider ligado
+    # 4) Fallback via IA somente se continuamos sem número real e provider foi passado
     if numero.lower() in {"s/n", "sn", "s-n"} and ai_provider is not None:
         resp = normalizar_enderecos_gpt(
             address1=address1,
             address2=address2,
             logradouro_cep=logradouro_cep,
             bairro_cep=bairro_cep,
-            cidade_cep=cidade_cep,  # CHANGE
-            uf_cep=uf_cep,          # CHANGE
+            cidade_cep=cidade_cep,
+            uf_cep=uf_cep,
             ai_provider=ai_provider,
         )
         if resp:
@@ -240,14 +327,11 @@ def normalizar_endereco_unico(
             if base_ai:
                 base = logradouro_cep.strip() if logradouro_cep else base_ai
             if comp_ai:
-                complemento = _limpa_dup_base_no_complemento(comp_ai, base)  # CHANGE: remove duplicidade
+                complemento = _limpa_dup_base_no_complemento(comp_ai, base)
 
-            # se continuou s/n, reavalie exceção DF
+            # reavalia exceção DF caso ainda seja s/n
             if numero.lower() in {"s/n", "sn", "s-n"}:
-                if _is_brasilia_exception(cidade_cep, uf_cep, base):
-                    precisa = False
-                else:
-                    precisa = True
+                precisa = not _is_brasilia_exception(cidade_cep, uf_cep, base)
 
     out: ShopifyEnderecoResultado = {
         "endereco_base": base or (address1 or "").strip(),

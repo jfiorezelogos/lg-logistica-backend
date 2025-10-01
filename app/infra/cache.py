@@ -1,17 +1,14 @@
-# app/infra/cache.py
 from collections.abc import Callable
 from functools import lru_cache
-from typing import TypeVar
+from typing import TypeVar, ParamSpec
 
-F = TypeVar("F", bound=Callable[..., object])
+P = ParamSpec("P")
+R = TypeVar("R")
 
-
-def simple_cache(maxsize: int = 1) -> Callable[[F], F]:
+def simple_cache(maxsize: int = 1) -> Callable[[Callable[P, R]], Callable[P, R]]:
     """
     Wrapper em torno de functools.lru_cache.
-    - Permite trocar facilmente a implementação de cache no futuro
-      (ex.: Redis, Memcached, in-memory custom).
-    - Usa maxsize=1 por padrão para loaders de arquivos de configuração
-      que raramente mudam.
     """
-    return lru_cache(maxsize=maxsize)
+    def decorator(func: Callable[P, R]) -> Callable[P, R]:
+        return lru_cache(maxsize=maxsize)(func)
+    return decorator

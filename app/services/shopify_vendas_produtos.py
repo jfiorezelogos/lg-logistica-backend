@@ -41,9 +41,10 @@ logger = logging.getLogger(__name__)
 
 def query_vendas_shopify() -> str:
     # Inclui `localizationExtensions` para capturar CPF no mesmo payload.
+    # Ajuste: adicionamos a variável $first (Int) para permitir paginação configurável.
     return """
-    query($cursor: String, $search: String) {
-      orders(first: 50, after: $cursor, query: $search) {
+    query($cursor: String, $search: String, $first: Int = 50) {
+      orders(first: $first, after: $cursor, query: $search) {
         pageInfo { hasNextPage endCursor }
         edges {
           node {
@@ -113,6 +114,10 @@ def _parametros_coleta_shopify(data_inicio_ddmmyyyy: str, fulfillment_status: st
 
 
 def _paginacao_vendas_shopify(search_str: str) -> Iterable[ShopifyPedido]:
+    """
+    Iterador legado: percorre TODAS as páginas de pedidos, emitindo cada nó.
+    Mantido para os fluxos de planilha já existentes.
+    """
     url = _graphql_url()
     headers = _http_shopify_headers()
     cursor: str | None = None
@@ -122,7 +127,10 @@ def _paginacao_vendas_shopify(search_str: str) -> Iterable[ShopifyPedido]:
     pagina = 0
 
     while True:
-        body = {"query": query_vendas_shopify(), "variables": {"cursor": cursor, "search": search_str}}
+        body = {
+            "query": query_vendas_shopify(),
+            "variables": {"cursor": cursor, "search": search_str, "first": 50},
+        }
 
         t0 = time.time()
         resp = sess.post(url, json=body, headers=headers, timeout=DEFAULT_TIMEOUT)
@@ -177,6 +185,80 @@ def _paginacao_vendas_shopify(search_str: str) -> Iterable[ShopifyPedido]:
             break
         pagina += 1
         cursor = cast(str | None, end_cursor)
+
+
+def _pagina_vendas_shopify(
+    *,
+    search_str: str,
+    cursor: str | None,
+    first: int,
+) -> tuple[list[ShopifyPedido], str | None]:
+    """
+    Busca UMA página de pedidos (até `first` itens) e retorna (lista_de_pedidos, next_cursor).
+    Respeita 429 (Retry-After) e throttling via extensões GraphQL, semelhante ao iterador legado.
+    """
+    url = _graphql_url()
+    headers = _http_shopify_headers()
+    sess = get_session()
+
+    # backoff simples em caso de 429/THROTTLED (mantemos consistente com o fluxo legado)
+    backoff = _GRAPHQL_BACKOFF_MIN
+
+    while True:
+        body = {
+            "query": query_vendas_shopify(),
+            "variables": {"cursor": cursor, "search": search_str, "first": max(1, min(first, 50))},
+        }
+
+        t0 = time.time()
+        resp = sess.post(url, json=body, headers=headers, timeout=DEFAULT_TIMEOUT)
+        dur = round(time.time() - t0, 3)
+
+        if resp.status_code == 429:
+            ra = resp.headers.get("Retry-After")
+            logger.warning(
+                "graphql_http_429_single",
+                extra={"retry_after_s": float(ra) if ra and ra.isdigit() else None, "duration_s": dur},
+            )
+            _sleep_throttle(float(ra) if ra and ra.isdigit() else backoff)
+            backoff = min(backoff * _GRAPHQL_BACKOFF_MULT, _GRAPHQL_BACKOFF_MAX)
+            continue
+
+        resp.raise_for_status()
+        payload = cast(dict[str, Any], resp.json() or {})
+
+        errors = payload.get("errors") or []
+        if errors:
+            throttled = any("throttled" in str(e.get("message", "")).lower() for e in errors)
+            wait, metrics = _throttle_from_extensions(payload)
+            if throttled:
+                logger.info(
+                    "graphql_throttled_single",
+                    extra={"duration_s": dur, "wait_s": round(wait, 3), **metrics},
+                )
+                _sleep_throttle(wait if wait > 0 else backoff)
+                backoff = min(backoff * _GRAPHQL_BACKOFF_MULT, _GRAPHQL_BACKOFF_MAX)
+                continue
+            logger.error("graphql_errors_single", extra={"errors": errors, "duration_s": dur})
+            raise RuntimeError(str(errors))
+
+        data = cast(dict[str, Any], payload.get("data") or {})
+        orders = cast(dict[str, Any], data.get("orders") or {})
+        edges = cast(list[dict[str, Any]], orders.get("edges") or [])
+        page_info = cast(dict[str, Any], orders.get("pageInfo") or {})
+        has_next = bool(page_info.get("hasNextPage"))
+        end_cursor = cast(str | None, page_info.get("endCursor"))
+
+        pedidos: list[ShopifyPedido] = []
+        for e in edges:
+            pedidos.append(cast(ShopifyPedido, (e or {}).get("node") or {}))
+
+        logger.info(
+            "graphql_single_page_ok",
+            extra={"duration_s": dur, "edges": len(edges), "has_next": has_next},
+        )
+
+        return pedidos, (end_cursor if has_next else None)
 
 
 # -----------------------------------------------------------------------------
@@ -404,3 +486,38 @@ def coletar_vendas_shopify(
         extra={"linhas": len(linhas), "duration_s": round(time.time() - t0, 3)},
     )
     return linhas, {"status_fulfillment": cont_status, "produto": cont_prod}
+
+
+# -----------------------------------------------------------------------------
+# NOVO: Função pública para a rota HTTP
+# -----------------------------------------------------------------------------
+
+
+def listar_pedidos_shopify(
+    *,
+    data_inicio: str,  # dd/MM/yyyy (mantém o padrão do repo)
+    status: str = "any",  # "any" | "unfulfilled"
+    cursor: str | None = None,
+    limit: int = 50,
+) -> tuple[list[ShopifyPedido], str | None]:
+    """
+    Retorna (lista_de_pedidos, next_cursor) para uso direto pela rota GET /shopify/pedidos.
+    - Usa as MESMAS estruturas e headers do cliente atual.
+    - Não enriquece endereço/CPF (isso fica no router, se habilitado).
+    """
+    # Monta a search string do jeito já padronizado no projeto (dd/MM/yyyy)
+    search = _parametros_coleta_shopify(data_inicio, status)
+
+    # Busca UMA página (até `limit` itens). Shopify limita 50 por página.
+    pedidos, next_cursor = _pagina_vendas_shopify(
+        search_str=search,
+        cursor=cursor,
+        first=max(1, min(limit, 50)),
+    )
+
+    # Apenas log útil; não transformar dados.
+    logger.info(
+        "listar_pedidos_shopify_ok",
+        extra={"items": len(pedidos), "next_cursor": bool(next_cursor), "status": status},
+    )
+    return pedidos, next_cursor

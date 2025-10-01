@@ -1,13 +1,18 @@
 # shopify_planilha
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any
 
+from app.services.shopify_ajuste_endereco import (
+    _limpa_cep,
+    normalizar_endereco_unico,
+    obter_bairros_por_cep,
+    parse_enderecos,
+)
 from app.services.shopify_client import _coletar_remaining_lineitems
 from app.utils.utils_helpers import _normalizar_order_id
-from app.services.shopify_busca_bairro import _limpa_cep, obter_bairros_por_cep
-from app.services.shopify_ajuste_endereco import normalizar_endereco_unico, parse_enderecos
+
 
 def enriquecer_cpfs_nas_linhas(linhas: list[dict[str, str]], mapa_cpfs: dict[str, str]) -> None:
     for l in linhas:
@@ -146,44 +151,47 @@ def enriquecer_bairros_nas_linhas(
     Preenche 'Bairro Entrega' e 'Bairro Comprador' consultando brazilcep por CEP.
     - Não sobrescreve valores já preenchidos.
     - Opera in-place.
-    - Usa cache LRU para evitar múltiplos hits do mesmo CEP.
+    - Resolve CEPs distintos em lote com cache para eficiência.
     """
-    # 1) Coleta todos os CEPs que precisam de bairro
-    ceps_need: set[str] = set()
+    if not linhas:
+        return
+
+    ceps: set[str] = set()
 
     if usar_cep_entrega:
         for l in linhas:
             if not str(l.get("Bairro Entrega", "")).strip():
-                cep8 = _limpa_cep(l.get("CEP Entrega"))
-                if len(cep8) == 8:
-                    ceps_need.add(cep8)
+                cl = _limpa_cep(l.get("CEP Entrega"))
+                if len(cl) == 8:
+                    ceps.add(cl)
 
     if usar_cep_comprador:
         for l in linhas:
             if not str(l.get("Bairro Comprador", "")).strip():
-                cep8 = _limpa_cep(l.get("CEP Comprador"))
-                if len(cep8) == 8:
-                    ceps_need.add(cep8)
+                cl = _limpa_cep(l.get("CEP Comprador"))
+                if len(cl) == 8:
+                    ceps.add(cl)
 
-    # 2) Resolve em lote (cacheado)
-    bairros_map, _ = obter_bairros_por_cep(ceps_need, timeout=timeout)
+    # Resolve em lote (cacheado)
+    bairros_map, _ = obter_bairros_por_cep(ceps, timeout=timeout)
 
-    # 3) Aplica nas linhas (sem sobrescrever quem já tem valor)
+    # Aplica sem sobrescrever quem já tem valor
     if usar_cep_entrega:
         for l in linhas:
             if not str(l.get("Bairro Entrega", "")).strip():
-                cep8 = _limpa_cep(l.get("CEP Entrega"))
-                bx = bairros_map.get(cep8, "")
+                cl = _limpa_cep(l.get("CEP Entrega"))
+                bx = bairros_map.get(cl, "")
                 if bx:
                     l["Bairro Entrega"] = bx
 
     if usar_cep_comprador:
         for l in linhas:
             if not str(l.get("Bairro Comprador", "")).strip():
-                cep8 = _limpa_cep(l.get("CEP Comprador"))
-                bx = bairros_map.get(cep8, "")
+                cl = _limpa_cep(l.get("CEP Comprador"))
+                bx = bairros_map.get(cl, "")
                 if bx:
                     l["Bairro Comprador"] = bx
+
 
 def enriquecer_enderecos_nas_linhas(
     linhas: list[dict[str, Any]],
@@ -217,4 +225,3 @@ def enriquecer_enderecos_nas_linhas(
 
 def parse_enderecos_batch(enderecos: list[dict[str, str]]) -> dict[str, dict[str, str]]:
     return parse_enderecos(enderecos)
-
