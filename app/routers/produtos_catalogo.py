@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from app.schemas.catalogo import (
+from app.schemas.produtos_catalogo import (
     AssinaturaPatch,
     ComboPatch,
     ItemCreate,

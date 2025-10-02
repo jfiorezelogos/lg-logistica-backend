@@ -1,4 +1,4 @@
-# app/services/assinaturas.py
+# app/services/guru_vendas_assinaturas.py
 
 # ============== IMPORTS ==============
 from __future__ import annotations
@@ -32,6 +32,28 @@ from app.utils.datetime_helpers import (
     _to_dt,
     bimestre_do_mes,
 )
+
+
+def garantir_dedup_ids_assinaturas(linhas: list[dict[str, Any]]) -> None:
+    """
+    Garante que cada linha de assinaturas tenha 'dedup_id' preenchido,
+    sem sobrescrever a política aplicada no ponto de criação da linha.
+
+    Regras (aplicadas na criação, e apenas validadas aqui):
+      - Linha principal ..........: dedup_id = transaction_id
+      - Linhas derivadas (combo / brinde por cupom / embutido por oferta) ...: dedup_id = transaction_id:SKU
+
+    Comportamento:
+      - Se 'dedup_id' já existe, NÃO altera (preserva transaction_id:SKU quando houver).
+      - Se 'dedup_id' está ausente, preenche com 'transaction_id'.
+      - Se não houver 'transaction_id', lança ValueError (dedup_id é obrigatório).
+    """
+    for r in linhas:
+        tid = str(r.get("transaction_id") or "").strip()
+        if not tid:
+            raise ValueError("Linha de assinatura sem 'transaction_id'; 'dedup_id' é obrigatório.")
+        if not str(r.get("dedup_id") or "").strip():
+            r["dedup_id"] = tid
 
 
 # ============== TIPAGEM AUXILIAR ==============
@@ -258,7 +280,7 @@ def gerenciar_coleta_vendas_assinaturas(
     t = [(pid, ini, fim, "trianuais") for pid in ids_map.get("trianuais", []) for (ini, fim) in intervalos_trianuais]
     todas_tarefas.extend(t)
 
-    print("[2️⃣] Gerando tarefas para bimestrais...]")
+    print("[2️⃣] Gerando tarefas para bimestrais...")
     t = [(pid, ini, fim, "bimestrais") for pid in ids_map.get("bimestrais", []) for (ini, fim) in intervalos_bimestrais]
     todas_tarefas.extend(t)
 
@@ -537,7 +559,11 @@ def montar_payload_busca_assinaturas(
     periodicidade: str,  # "mensal" | "bimestral" (default bimestral)
     skus_info: Mapping[str, Mapping[str, Any]] | None = None,
     rules_path: str | None = None,
+    planilha_id: str | None = None,  # <- apenas um '*', e o param segue como keyword-only
 ) -> dict[str, Any]:
+    """Monta o payload para o worker de assinaturas.
+    Se planilha_id for informado, ele é incluído no payload para rastreio/persistência posterior.
+    """
     try:
         ano_i = int(ano)
         mes_i = int(mes)
@@ -569,7 +595,7 @@ def montar_payload_busca_assinaturas(
     if not isinstance(regras, list):
         regras = []
 
-    return {
+    payload = {
         "modo": "assinaturas",
         "ano": ano_i,
         "mes": mes_i,
@@ -585,3 +611,8 @@ def montar_payload_busca_assinaturas(
         "embutido_end_ts": dt_end.timestamp(),
         "modo_periodo": modo,
     }
+
+    if planilha_id:
+        payload["planilha_id"] = planilha_id
+
+    return payload

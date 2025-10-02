@@ -14,6 +14,26 @@ class BuscarProdutosIn(BaseModel):
     skus_info: Mapping[str, Mapping[str, Any]] | None = None
 
 
+class PersistenciaPlanilha(BaseModel):
+    planilha_id: str = Field(..., description="Identificador da planilha de destino")
+    adicionados: int = Field(..., ge=0, description="Linhas novas adicionadas")
+    atualizados: int = Field(..., ge=0, description="Linhas existentes que foram enriquecidas/atualizadas")
+
+
 class ColetaOut(BaseModel):
     linhas: list[dict[str, Any]]
     contagem: dict[str, dict[str, int]]
+    persistencia: PersistenciaPlanilha = Field(
+        ...,
+        description=(
+            "Resumo da gravação em planilha (planilha_id, adicionados, atualizados).\n\n"
+            "🔹 **Regras de deduplicação (dedup_id obrigatório)**:\n"
+            "- **Linha principal (produto)**: `transaction_id`.\n"
+            "- **Itens de combo**: `transaction_id+SKU`."
+        ),
+        examples=[{
+            "planilha_id": "pln_20251002_154522_ab12cd",
+            "adicionados": 95,
+            "atualizados": 12
+        }],
+    )

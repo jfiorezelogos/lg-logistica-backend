@@ -24,6 +24,7 @@ def iniciar_coleta_vendas_produtos(
     nome_produto: str | None,
     skus_info: Mapping[str, Mapping[str, Any]],
     transportadoras_permitidas: Sequence[str] = (),
+    planilha_id: str | None = None,  # opcional: para rastreio/telemetria
 ) -> dict[str, Any]:
     """
     Backend-only: prepara o payload de coleta de VENDAS de PRODUTOS.
@@ -32,11 +33,11 @@ def iniciar_coleta_vendas_produtos(
     - `nome_produto`: None → todos (exceto tipo 'assinatura')
     - `skus_info`: mapa de nome -> info (deve conter 'tipo' e opcionalmente 'guru_ids')
     - `transportadoras_permitidas`: nomes válidos no domínio (ex.: ["CORREIOS", "GFL", ...])
+    - `planilha_id`: id da planilha (se quiser rastrear no payload; a persistência é feita na rota)
 
     Retorna o dict `payload` para ser consumido pela camada de domínio/worker/filas.
     Nenhuma dependência de UI ou estado global.
     """
-
     ini_iso = _as_iso(data_ini)
     fim_iso = _as_iso(data_fim)
 
@@ -73,7 +74,8 @@ def iniciar_coleta_vendas_produtos(
         "produtos_ids": produtos_ids,
         "transportadoras_permitidas": list(transportadoras_permitidas or []),
     }
-
+    if planilha_id:
+        payload["planilha_id"] = planilha_id
     return payload
 
 
@@ -85,9 +87,9 @@ def preparar_coleta_vendas_produtos(
     skus_info: Mapping[str, Mapping[str, Any]],
     box_nome: str = "",
     transportadoras_permitidas: Sequence[str] = (),
+    planilha_id: str | None = None,  # opcional: para rastreio/telemetria
 ) -> dict[str, Any]:
     """Prepara o payload para coleta de vendas de produtos (backend puro)."""
-
     ini_iso = _as_iso(data_ini)
     fim_iso = _as_iso(data_fim)
 
@@ -118,7 +120,7 @@ def preparar_coleta_vendas_produtos(
     if not produtos_ids:
         raise ValueError("Nenhum produto elegível com 'guru_ids' válidos encontrado para a coleta.")
 
-    return {
+    payload = {
         "modo": "produtos",
         "inicio": ini_iso,
         "fim": fim_iso,
@@ -126,6 +128,9 @@ def preparar_coleta_vendas_produtos(
         "box_nome": (box_nome or "").strip(),
         "transportadoras_permitidas": list(transportadoras_permitidas or []),
     }
+    if planilha_id:
+        payload["planilha_id"] = planilha_id
+    return payload
 
 
 def coletar_vendas_guru(
@@ -135,7 +140,8 @@ def coletar_vendas_guru(
     Coleta transações de PRODUTOS com base no payload:
       - dados['produtos_ids']: list[str]
       - dados['inicio'] / dados['fim']: "YYYY-MM-DD" (ou ISO com tempo)
-    Usa janelas divididas por bimestres quadrimestrais (abr/ago/dez) via dividir_periodos_coleta_api_guru.
+
+    Divide o intervalo em janelas via dividir_periodos_coleta_api_guru.
     Retorna (transacoes, reservado, dados_ecoado).
     """
     produtos_ids = list(map(str, dados.get("produtos_ids") or []))
@@ -148,7 +154,6 @@ def coletar_vendas_guru(
     if ini_dt > end_dt:
         raise ValueError("Intervalo inválido: inicio > fim.")
 
-    # (opcional) clamp no limite inferior, se desejar
     ini_dt = max(ini_dt, LIMITE_INFERIOR)
 
     # divide o período em blocos
@@ -172,5 +177,12 @@ def coletar_vendas_guru(
                     transacoes.extend(pagina)
                 else:
                     print(f"[⚠️] Produto {pid} sem dados após retries: {e}")
+
+    # 🔹 Padroniza dedupe no GURU: uma linha por 'transaction_id'
+    for row in transacoes:
+        tid = str(row.get("transaction_id") or "").strip()
+        if tid:
+            # garante dedupe_id explícito (storage usa esse campo, mas também infere)
+            row.setdefault("dedup_id", tid)
 
     return transacoes, {}, dict(dados)

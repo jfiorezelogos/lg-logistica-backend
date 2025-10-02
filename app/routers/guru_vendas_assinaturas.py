@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query
 
-from app.schemas.guru_vendas_assinaturas import ColetaOut
-from app.services.guru_vendas_assinaturas import montar_payload_busca_assinaturas
+from app.schemas.guru_vendas_assinaturas import ColetaOut, PersistenciaPlanilha
+from app.services.guru_vendas_assinaturas import (
+    garantir_dedup_ids_assinaturas,  # ✅ validador de dedup_id
+    montar_payload_busca_assinaturas,
+)
 from app.services.guru_worker_coleta import executar_worker_guru
 from app.services.loader_main import carregar_cfg, carregar_skus
 from app.services.loader_regras_assinaturas import (
@@ -15,37 +18,45 @@ from app.services.loader_regras_assinaturas import (
     normalizar_rules,
 )
 
+# persistência em planilha (JSON) com dedupe/merge
+from app.storage.planilhas import append_coleta
+
 router = APIRouter(prefix="/guru/pedidos", tags=["Coletas"])
 
-# --- caminhos ---
 BASE_DIR = Path(__file__).resolve().parents[2]
 SKUS_PATH = BASE_DIR / "skus.json"
 CFG_PATH = BASE_DIR / "config_ofertas.json"
-
-# --- cache exclusivo desta rota (guarda apenas o último snapshot) ---
-_CACHE_ASSINATURAS: dict[str, tuple[list[dict[str, Any]], dict[str, dict[str, int]]]] = {}
 
 
 @router.get(
     "/assinaturas",
     response_model=ColetaOut,
-    summary="Coletar assinaturas (retorno completo; paginação feita no front)",
+    summary="Coletar assinaturas",
     description=(
-        "Executa a **coleta completa** e retorna **todas as linhas** em `linhas`, junto com `contagem`.\n\n"
-        "- **Cache desta rota**: guarda apenas o **último snapshot** coletado; cada nova chamada sobrescreve.\n"
-        "- **Paginação**: deve ser aplicada **exclusivamente no frontend** (ex.: fatiando `linhas`)."
+        "Executa a **coleta completa** e retorna todas as linhas em `linhas`, junto com `contagem`.\n\n"
+        "⚠️ **Obrigatório** informar `planilha_id`: as linhas serão **acrescentadas** na planilha (JSON) com deduplicação.\n"
+        "Regras de dedupe (dedup_id obrigatório):\n"
+        "- **Linha principal**: `transaction_id`\n"
+        "- **Derivadas** (combo, brinde por cupom, embutido por oferta): `transaction_id+SKU`\n"
+        "A planilha deve ser criada antes em `/planilhas/criar`."
     ),
     response_description="Retorna todas as linhas coletadas (`linhas`) e o resumo (`contagem`).",
 )
 def coletar_assinaturas(
-    ano: int,  # ex.: 2025
-    mes: int,  # 1..12
-    box_sku: str,  # ex.: "C002A"
-    modo_periodo: int = Query(
-        ..., ge=0, le=1, description="Modo do período: **1 = PERÍODO**, **0 = TODAS**", example=1
-    ),
+    ano: int,
+    mes: int,
+    box_sku: str,
+    modo_periodo: int = Query(..., ge=0, le=1, description="1 = PERÍODO, 0 = TODAS", example=1),
     periodicidade: Literal["mensal", "bimestral"] = Query(
-        ..., description='Periodicidade: "mensal" ou "bimestral"', example="mensal"
+        ..., description="Periodicidade da assinatura", example="mensal"
+    ),
+    planilha_id: str = Query(
+        ...,
+        description=(
+            "ID da planilha (JSON) já criada em `/planilhas/criar` para persistir as linhas com dedupe "
+            "(`transaction_id` na principal; `transaction_id+SKU` nas derivadas)."
+        ),
+        example="pln_20251002_154522_ab12cd",
     ),
 ) -> ColetaOut:
     try:
@@ -57,14 +68,11 @@ def coletar_assinaturas(
         if not box_entry:
             raise HTTPException(status_code=400, detail=f"SKU '{box_sku}' não encontrado no skus.json")
 
-        # traduz modo (0/1 -> "TODAS"/"PERÍODO")
         modo_str = "PERÍODO" if modo_periodo == 1 else "TODAS"
 
-        # derivados de config
         ofertas_embutidas = montar_ofertas_embutidas(cfg)
         cupons_cdf, cupons_bi_mens = montar_mapas_cupons(cfg)
 
-        # monta payload
         dados = montar_payload_busca_assinaturas(
             ano=ano,
             mes=mes,
@@ -80,12 +88,31 @@ def coletar_assinaturas(
         dados["cupons_personalizados_anual"] = cupons_cdf
         dados["cupons_personalizados_bimestral"] = cupons_bi_mens
 
-        # coleta nova e substitui cache anterior (mantém só o último snapshot)
+        # 1) coleta
         linhas, contagem = executar_worker_guru(dados, skus_info=skus_info)
-        _CACHE_ASSINATURAS["last"] = (linhas, contagem)
 
-        # retorno completo (sem paginação no backend)
-        return ColetaOut(linhas=linhas, contagem=contagem)
+        # 2) valida dedup_id (não-destrutivo): exige transaction_id e preenche dedup_id
+        #    apenas quando estiver ausente (linha principal); não mexe nas derivadas já setadas (transaction_id:SKU)
+        try:
+            garantir_dedup_ids_assinaturas(linhas)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+
+        # 3) persistir na planilha (dedupe por dedup_id + merge de campos em linhas existentes)
+        try:
+            adicionados, atualizados = append_coleta(planilha_id, linhas)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail=f"planilha_id não encontrada: {planilha_id}")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Erro ao persistir na planilha: {e!s}")
+
+        persistencia = PersistenciaPlanilha(
+            planilha_id=planilha_id,
+            adicionados=adicionados,
+            atualizados=atualizados,
+        )
+
+        return ColetaOut(linhas=linhas, contagem=contagem, persistencia=persistencia)
 
     except HTTPException:
         raise

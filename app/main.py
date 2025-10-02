@@ -17,14 +17,16 @@ from app.common.logging_setup import (
 # Middleware de correlação (garante X-Request-Id de entrada/saída)
 # Se o seu módulo ainda exporta RequestIdMiddleware, troque o import abaixo.
 from app.common.middlewares import CorrelationIdMiddleware
-
-# Routers
-from app.routers.catalogo import router as catalogo_router
+from app.routers.fretebarato_cotacao import router as cotar_fretes_router
 from app.routers.guru_importar_planilha import router as guru_importar_planilha_router
 from app.routers.guru_produtos import router as guru_produtos_router
 from app.routers.guru_regras import router as regras_router
 from app.routers.guru_vendas_assinaturas import router as guru_vendas_assinaturas_router
 from app.routers.guru_vendas_produtos import router as guru_vendas_produtos_router
+
+# Routers
+from app.routers.produtos_catalogo import router as catalogo_router
+from app.routers.shopify_fulfillment import router as shopify_fulfillment_router
 from app.routers.shopify_produtos import router as shopify_produtos_router
 from app.routers.shopify_vendas_produtos import router as shopify_vendas_router
 
@@ -80,6 +82,8 @@ def create_app() -> FastAPI:
     app.include_router(regras_router)
     app.include_router(catalogo_router)
     app.include_router(guru_importar_planilha_router)
+    app.include_router(shopify_fulfillment_router)
+    app.include_router(cotar_fretes_router)
 
     @app.get("/health", tags=["Health"])
     def health() -> dict[str, bool]:

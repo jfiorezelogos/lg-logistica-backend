@@ -159,6 +159,7 @@ def gerar_linha_base_planilha(
         "ID Forma Pagamento": "",
         "transaction_id": valores["transaction_id"],
         "indisponivel": "",
+        "dedup_id": "",
     }
 
 
@@ -170,11 +171,14 @@ def desmembrar_combo_planilha(
     """
     Desmembra um combo em itens simples para a planilha.
 
-    Convenções esperadas:
+    Regras/Convenções:
+      - Cada linha gerada DEVE possuir dedup_id = "transaction_id:SKU" (obrigatório).
+      - 'linha_base' precisa conter 'transaction_id'.
+      - Cada componente do combo precisa resolver um SKU não vazio.
       - valores["produto_principal"] = nome do combo
       - valores["valor_total"]       = total do combo (float/int ou string com vírgula/ponto)
-      - skus_info[nome_combo]["composto_de"] = [SKUs dos itens]
-      - skus_info[produto_simples]["sku"] = SKU do produto simples
+      - skus_info[nome_combo]["composto_de"] = [SKUs (ou nomes) dos itens]
+      - skus_info[produto_simples]["sku"]    = SKU do produto simples
     """
     nome_combo: str = str(valores.get("produto_principal", "")).strip()
     info_combo: Mapping[str, Any] = skus_info.get(nome_combo, {})
@@ -199,7 +203,6 @@ def desmembrar_combo_planilha(
         if isinstance(v, (int, float)):
             return Decimal(str(v)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         s = str(v).strip()
-        # remove separador de milhar e normaliza decimal
         s = s.replace(".", "").replace(",", ".")
         try:
             return Decimal(s).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
@@ -207,31 +210,40 @@ def desmembrar_combo_planilha(
             return Decimal("0.00")
 
     def _fmt(d: Decimal) -> str:
-        # retorna "12,34"
         return f"{d:.2f}".replace(".", ",")
 
     total = _to_dec(valores.get("valor_total"))
     n = len(skus_componentes)
 
-    # Se não há componentes, retorna a linha original (sem alterar valores)
+    # transaction_id da linha base é obrigatório
+    tid_base = str(linha_base.get("transaction_id") or "").strip()
+    if not tid_base:
+        raise ValueError("linha_base sem 'transaction_id' — dedup_id é obrigatório.")
+
+    # Se não há componentes, retorna a linha ORIGINAL (sem alterar dedup_id aqui).
+    # A linha principal deve ser tratada fora (dedup_id = transaction_id).
     if n == 0:
         return [linha_base]
 
-    # Resolve (nome_item, sku_item) para cada componente.
-    # A lista "composto_de" pode conter SKU ou, eventualmente, nomes.
+    # Resolve (nome_item, sku_item) para cada componente (pode vir SKU ou nome)
     itens_resolvidos: list[tuple[str, str]] = []
     for comp in skus_componentes:
         if comp in sku_to_nome:  # comp é SKU conhecido
             itens_resolvidos.append((sku_to_nome[comp], comp))
         elif comp in nome_to_sku:  # comp é nome conhecido
             itens_resolvidos.append((comp, nome_to_sku[comp]))
-        else:
-            # fallback: mantém comp como SKU e nome = comp
+        else:  # fallback: mantém comp como SKU e nome = comp
             itens_resolvidos.append((comp, comp))
+
+    def _dedup(tid: str, sku: str) -> str:
+        sku_norm = str(sku or "").strip().upper()
+        if not sku_norm:
+            raise ValueError("Componente de combo sem SKU resolvido — dedup_id é obrigatório.")
+        return f"{tid}:{sku_norm}"
 
     linhas: list[dict[str, Any]] = []
 
-    # total <= 0: gera itens com zero
+    # total <= 0: gera itens com valor 0,00
     if total <= Decimal("0.00"):
         for nome_item, sku_item in itens_resolvidos:
             nova = dict(linha_base)
@@ -239,7 +251,8 @@ def desmembrar_combo_planilha(
             nova["SKU"] = sku_item
             nova["Valor Unitário"] = "0,00"
             nova["Valor Total"] = "0,00"
-            nova["Combo"] = nome_combo  # remova se não quiser esta coluna
+            nova["Combo"] = nome_combo
+            nova["dedup_id"] = _dedup(tid_base, sku_item)
             try:
                 nova["indisponivel"] = "S" if produto_indisponivel(nome_item, sku=sku_item, skus_info=skus_info) else ""
             except Exception:
@@ -247,7 +260,7 @@ def desmembrar_combo_planilha(
             linhas.append(nova)
         return linhas
 
-    # Rateio uniforme com distribuição de centavos (soma == total)
+    # Rateio uniforme (soma == total), distribuindo centavos
     quota = (total / n).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     subtotal = quota * (n - 1)
     ultimo = (total - subtotal).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
@@ -260,6 +273,7 @@ def desmembrar_combo_planilha(
         nova["Valor Unitário"] = _fmt(valor_item)
         nova["Valor Total"] = _fmt(valor_item)
         nova["Combo"] = nome_combo  # opcional
+        nova["dedup_id"] = _dedup(tid_base, sku_item)
         try:
             nova["indisponivel"] = "S" if produto_indisponivel(nome_item, sku=sku_item, skus_info=skus_info) else ""
         except Exception:
@@ -279,6 +293,15 @@ def montar_planilha_vendas_guru(
     - Sem UI, sem estado/cancelador/callbacks.
     - Mantém contagem por tipo (para assinaturas); em produtos, contagens ficam zeradas.
     Retorna (linhas_planilha, contagem) **padronizadas** para o layout do Bling.
+
+    Regras de dedupe:
+      - Produtos:
+          principal -> dedup_id = transaction_id
+          combo     -> dedup_id = transaction_id:SKU (feito em desmembrar_combo_planilha)
+      - Assinaturas:
+          principal -> dedup_id = transaction_id
+          cupom/extra (brindes_extras) -> dedup_id = transaction_id:SKU
+          embutido por oferta          -> dedup_id = transaction_id:SKU
     """
     linhas_planilha: list[dict[str, Any]] = []
 
@@ -317,7 +340,7 @@ def montar_planilha_vendas_guru(
             return None
         if isinstance(val, (int, float)):
             v = float(val)
-            if v > 1e12:  # ms → s
+            if v > 1e12:
                 v /= 1000.0
             return v
         if isinstance(val, dt.datetime):
@@ -390,6 +413,7 @@ def montar_planilha_vendas_guru(
                         "Valor Unitário": formatar_valor(valores["valor_unitario"]),
                         "Valor Total": formatar_valor(valores["valor_total"]),
                         "indisponivel": _flag_indisp(nome_produto, sku_produto),
+                        "dedup_id": str(linha_base.get("transaction_id") or "").strip(),
                     }
                 )
 
@@ -405,6 +429,7 @@ def montar_planilha_vendas_guru(
                             lp_nome = str(linha_item.get("Produto") or "")
                             lp_sku = str(linha_item.get("SKU") or "")
                             linha_item["indisponivel"] = _flag_indisp(lp_nome, lp_sku)
+                            # dedup_id de combo já setado dentro de desmembrar_combo_planilha
                             linhas_planilha.append(linha_item)
                 else:
                     linhas_planilha.append(linha_base)
@@ -429,7 +454,6 @@ def montar_planilha_vendas_guru(
         else:
             df_novas["indisponivel"] = [""] * len(df_novas)
 
-        # ✅ retorna padronizado
         linhas_pad = df_novas.to_dict(orient="records")
         return linhas_pad, contagem
 
@@ -515,7 +539,7 @@ def montar_planilha_vendas_guru(
             if valores.get("usou_cupom"):
                 contagem[_ckey(tipo_plano)]["cupons"] += 1
 
-            # linha base
+            # linha principal (dedupe = transaction_id)
             contact = transacao.get("contact", {})
             linha = gerar_linha_base_planilha(
                 contact,
@@ -525,9 +549,7 @@ def montar_planilha_vendas_guru(
                 subscription_id=subscription_id,
                 cupom_valido=cupom_usado,
             )
-
             nome_produto_principal = (dados.get("box_nome") or "").strip() or str(valores["produto_principal"])
-
             linha["Produto"] = nome_produto_principal
             linha["SKU"] = skus_info.get(nome_produto_principal, {}).get("sku", "")
             linha["Valor Unitário"] = formatar_valor(valores["valor_unitario"])
@@ -553,13 +575,18 @@ def montar_planilha_vendas_guru(
                 mes_ref = data_fim_periodo if isinstance(data_fim_periodo, dt.datetime) else data_pedido
                 linha["periodo"] = _calc_periodo(periodicidade_atual, mes_ref)
 
+            # 👇 dedup principal: transaction_id
+            tid = str(linha.get("transaction_id") or "").strip()
+            if tid:
+                linha["dedup_id"] = tid
+
             linhas_planilha.append(linha)
 
             # janela obrigatória para aplicar brindes/embutidos
             if not _aplica_janela(dados, data_pedido):
                 valores["brindes_extras"] = []
 
-            # brindes extras
+            # brindes extras (cupom) -> dedupe = transaction_id:SKU
             for br in valores.get("brindes_extras") or []:
                 brinde_nome = str(br.get("nome", "")).strip() if isinstance(br, Mapping) else str(br).strip()
                 if not brinde_nome:
@@ -576,9 +603,13 @@ def montar_planilha_vendas_guru(
                         "subscription_id": subscription_id,
                     }
                 )
+                if tid and sku_b:
+                    lb["dedup_id"] = f"{tid}:{str(sku_b).strip().upper()}"
+                elif tid:
+                    lb["dedup_id"] = tid
                 linhas_planilha.append(lb)
 
-            # embutidos por oferta (validade + dentro da janela)
+            # embutidos por oferta (validade + dentro da janela) -> dedupe = transaction_id:SKU
             oferta_id = transacao.get("product", {}).get("offer", {}).get("id")
             oferta_id_clean = str(oferta_id).strip()
             ofertas_normalizadas = {str(k).strip(): v for k, v in ofertas_embutidas.items()}
@@ -608,6 +639,10 @@ def montar_planilha_vendas_guru(
                         "subscription_id": subscription_id,
                     }
                 )
+                if tid and sku_emb:
+                    le["dedup_id"] = f"{tid}:{str(sku_emb).strip().upper()}"
+                elif tid:
+                    le["dedup_id"] = tid
                 linhas_planilha.append(le)
                 contagem[_ckey(tipo_plano)]["embutidos"] += 1
 
@@ -633,7 +668,6 @@ def montar_planilha_vendas_guru(
     else:
         df_novas["indisponivel"] = [""] * len(df_novas)
 
-    # ✅ retorna padronizado
     linhas_pad = df_novas.to_dict(orient="records")
     return linhas_pad, contagem
 
