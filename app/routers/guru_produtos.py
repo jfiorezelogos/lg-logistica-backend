@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from app.services.guru_produtos import coletar_produtos_guru
 
-router = APIRouter(prefix="/guru", tags=["Coleta"])
+router = APIRouter(prefix="/guru", tags=["Coletas"])
 
 
 class GuruProdutosPageResponse(BaseModel):

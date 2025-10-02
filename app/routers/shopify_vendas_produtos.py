@@ -1,94 +1,53 @@
 # /routers/shopify_vendas_produtos.py
 
-from fastapi import APIRouter, HTTPException, Query
 from datetime import datetime
+from typing import Any
 
-from app.schemas.shopify_vendas_produtos import PedidosResponse, ShopifyPedidosQuery
-from app.services.shopify_ajuste_endereco import buscar_cep_com_timeout, normalizar_endereco_unico
-from app.services.shopify_vendas_produtos import listar_pedidos_shopify  # use a função existente
+from fastapi import APIRouter, HTTPException, Query
 
-router = APIRouter(prefix="/shopify", tags=["shopify"])
+from app.services.shopify_vendas_produtos import coletar_vendas_shopify
+
+router = APIRouter(prefix="/shopify", tags=["Coletas"])
 
 
-@router.get("/pedidos", response_model=PedidosResponse)
+@router.get("/pedidos")
 def get_shopify_pedidos(
     status: str = Query("any", pattern="^(any|unfulfilled)$"),
-    data_inicio: str = Query(..., description="YYYY-MM-DD"),  # recebido no padrão ISO
-    cursor: str | None = Query(None),
-    limit: int = Query(50, ge=1, le=50),
-    normalize_endereco: bool = Query(False),
-):
-    # 0) Converter data_inicio ISO -> dd/MM/yyyy (padrão do service)
+    data_inicio: str = Query(..., description="YYYY-MM-DD"),  # data no padrão ISO
+    gpt: bool = Query(False, description="Ativa ajuste de endereço com IA na normalização"),
+) -> dict[str, Any]:
+    # 1) Converter data_inicio para dd/MM/yyyy (padrão interno do service)
     try:
         _dt = datetime.strptime(data_inicio, "%Y-%m-%d")
         data_inicio_ddmmyyyy = _dt.strftime("%d/%m/%Y")
     except ValueError:
         raise HTTPException(status_code=400, detail='data_inicio inválida: use "YYYY-MM-DD"')
 
-    # 1) Validação (opcional)
-    _ = ShopifyPedidosQuery(
-        status=status,
-        data_inicio=data_inicio,
-        cursor=cursor,
-        limit=limit,
-        normalize_endereco=normalize_endereco,
-    )
-
+    # 2) Coleta completa -> linhas no layout da planilha (padronizar_planilha_bling)
     try:
-        # 2) Chamada ao service (usa GraphQL e paginação existentes)
-        pedidos, next_cursor = listar_pedidos_shopify(
-            data_inicio=data_inicio_ddmmyyyy,  # <- convertido
-            status=status,
-            cursor=cursor,
-            limit=limit,
+        linhas, stats = coletar_vendas_shopify(
+            data_inicio=data_inicio_ddmmyyyy,
+            fulfillment_status=status,
+            sku_produtos=None,
+            enrich_cpfs=True,  # sempre injeta CPF quando disponível
+            enrich_bairros=True,  # sempre busca bairro via CEP (lote/cache)
+            enrich_enderecos=True,  # sempre normaliza endereço
         )
+        # Se quiser IA às vezes, conecte seu provider dentro de enriquecer_enderecos_nas_linhas
+        # quando gpt=True (ex.: via variável global ou parâmetro adicional no pipeline).
+        # Aqui apenas propagamos a flag para facilitar debugging futuro:
+        stats.setdefault("flags", {})["gpt"] = gpt
+    except Exception:
+        raise HTTPException(status_code=502, detail="Erro ao coletar/normalizar pedidos da Shopify")
 
-    except Exception as e:
-        if getattr(e, "status_code", None) == 429:
-            retry_after = getattr(e, "retry_after", 2)
-            raise HTTPException(
-                status_code=429,
-                detail="Rate limited by Shopify",
-                headers={"Retry-After": str(retry_after)},
-            )
-        raise HTTPException(status_code=502, detail="Erro ao consultar a Shopify")
-
-    # 3) (Opcional) Enriquecimento de endereço
-    if normalize_endereco and pedidos:
-        for p in pedidos:
-            addr = (p.get("shippingAddress") or {}) if isinstance(p, dict) else getattr(p, "shippingAddress", None)
-            if not addr:
-                continue
-
-            order_id = str(p.get("id") or p.get("name") or "")
-            address1 = str(addr.get("address1") or "")
-            address2 = str(addr.get("address2") or "")
-            cep = str(addr.get("zip") or "")
-
-            try:
-                norm = normalizar_endereco_unico(
-                    order_id=order_id,
-                    address1=address1,
-                    address2=address2,
-                    cep=cep or None,
-                    ai_provider=None,
-                )
-                if isinstance(addr, dict):
-                    addr["address1"] = norm.get("endereco_base") or address1
-                    addr["address2"] = norm.get("complemento") or address2
-                    addr.setdefault("numero", norm.get("numero"))
-                    addr.setdefault("precisa_contato", norm.get("precisa_contato"))   # <- remova se não tiver no schema
-                    if norm.get("logradouro_oficial"):
-                        addr.setdefault("logradouro_oficial", norm["logradouro_oficial"])
-                    if norm.get("bairro_oficial"):
-                        addr.setdefault("bairro_oficial", norm["bairro_oficial"])
-
-                if cep:
-                    dados_cep = buscar_cep_com_timeout(cep, timeout=3)
-                    if dados_cep and isinstance(addr, dict):
-                        addr.setdefault("bairro_oficial", dados_cep.get("district"))
-                        addr.setdefault("logradouro_oficial", dados_cep.get("street"))
-            except Exception:
-                pass
-
-    return PedidosResponse(items=pedidos, next_cursor=next_cursor)
+    # 3) Retorno JSON no formato “planilha” (mesmas colunas do Bling)
+    # Ex.: linhas: List[Dict[str, str]] com chaves como:
+    # "Número pedido", "Nome Comprador", "CPF/CNPJ Comprador", "Endereço Entrega", "Número Entrega", ...
+    return {
+        "linhas": linhas,  # dados já prontos no shape da planilha
+        "stats": stats,  # contagens auxiliares (status/produto etc.)
+        "filtros": {
+            "status": status,
+            "data_inicio": data_inicio,  # ecoa a data ISO solicitada
+        },
+    }

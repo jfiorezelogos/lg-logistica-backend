@@ -24,7 +24,7 @@ from app.utils.throttlers import (
     _sleep_throttle,
     _throttle_from_extensions,
 )
-from app.utils.utils_helpers import _normalizar_order_id
+from app.utils.utils_helpers import normalizar_order_id
 
 from .shopify_client import _coletar_remaining_lineitems, _graphql_url, _http_shopify_headers
 
@@ -40,8 +40,15 @@ logger = logging.getLogger(__name__)
 
 
 def query_vendas_shopify() -> str:
-    # Inclui `localizationExtensions` para capturar CPF no mesmo payload.
-    # Ajuste: adicionamos a variável $first (Int) para permitir paginação configurável.
+    """
+    Query GraphQL para coletar pedidos da Shopify.
+    Ajustes:
+      - adicionamos $first configurável (padrão 50)
+      - lineItems(first: 50) → pega título/sku/valores
+      - fulfillmentOrders.lineItems(first: 50) → garante remainingQuantity
+      - localizationExtensions(first: 10) → aumenta chance de capturar CPF
+      - inclui campos de endereço relevantes
+    """
     return """
     query($cursor: String, $search: String, $first: Int = 50) {
       orders(first: $first, after: $cursor, query: $search) {
@@ -52,12 +59,23 @@ def query_vendas_shopify() -> str:
             name
             createdAt
             displayFulfillmentStatus
-            customer { firstName lastName email }
-            shippingAddress {
-              address1 address2 city provinceCode zip phone
-            }
             currentTotalDiscountsSet { shopMoney { amount } }
-            shippingLine { discountedPriceSet { shopMoney { amount } } }
+
+            customer { email firstName lastName }
+
+            shippingAddress {
+              name
+              address1
+              address2
+              city
+              provinceCode
+              zip
+              phone
+            }
+
+            shippingLine {
+              discountedPriceSet { shopMoney { amount } }
+            }
 
             localizationExtensions(first: 10) {
               edges {
@@ -69,19 +87,24 @@ def query_vendas_shopify() -> str:
               edges {
                 node {
                   id
+                  title
                   quantity
-                  discountedTotalSet { shopMoney { amount } }
+                  sku
                   product { id }
+                  discountedTotalSet { shopMoney { amount } }
                 }
               }
             }
+
             fulfillmentOrders(first: 10) {
               edges {
                 node {
+                  id
                   status
                   lineItems(first: 50) {
                     edges {
                       node {
+                        id
                         remainingQuantity
                         lineItem { id }
                       }
@@ -275,7 +298,7 @@ def obter_cpfs_pedidos_shopify(order_ids: Iterable[str]) -> dict[str, str]:
     headers = {"Content-Type": "application/json", "X-Shopify-Access-Token": settings.SHOPIFY_TOKEN}
 
     for oid in order_ids:
-        oid_norm = _normalizar_order_id(oid)
+        oid_norm = normalizar_order_id(oid)
         gid = f"gid://shopify/Order/{oid_norm}"
 
         global _gql_ultimo
@@ -493,31 +516,146 @@ def coletar_vendas_shopify(
 # -----------------------------------------------------------------------------
 
 
+from collections.abc import Callable
+from typing import Optional
+
+from app.services.shopify_ajuste_endereco import normalizar_endereco_unico
+
+# se você tiver um provider de IA, importe-o e passe aqui; senão deixe None
+AiProvider = Optional[Callable[[str], Any]]
+
+
+def _extrair_cpf_do_node(node: dict[str, Any]) -> str | None:
+    """
+    Lê CPF de localizationExtensions do próprio payload GraphQL.
+    Regras:
+      - purpose == "TAX" e/ou título contendo 'cpf'
+      - retorna 11 dígitos (sanitizado)
+    """
+    try:
+        edges = (node.get("localizationExtensions") or {}).get("edges") or []
+        for e in edges:
+            n = (e or {}).get("node") or {}
+            title = str(n.get("title") or "").lower()
+            purpose = str(n.get("purpose") or "").lower()
+            if "cpf" in title or purpose == "tax":
+                import re as _re
+
+                cpf = _re.sub(r"\D", "", str(n.get("value") or ""))[:11]
+                if len(cpf) == 11:
+                    return cpf
+    except Exception:
+        pass
+    return None
+
+
 def listar_pedidos_shopify(
     *,
-    data_inicio: str,  # dd/MM/yyyy (mantém o padrão do repo)
+    data_inicio: str,  # dd/MM/yyyy (padrão do repo)
     status: str = "any",  # "any" | "unfulfilled"
-    cursor: str | None = None,
-    limit: int = 50,
-) -> tuple[list[ShopifyPedido], str | None]:
+    usar_gpt: bool = False,  # ativa fallback por IA na normalização
+) -> tuple[list[ShopifyPedido], None]:
     """
-    Retorna (lista_de_pedidos, next_cursor) para uso direto pela rota GET /shopify/pedidos.
-    - Usa as MESMAS estruturas e headers do cliente atual.
-    - Não enriquece endereço/CPF (isso fica no router, se habilitado).
+    Retorna TODOS os pedidos a partir de data_inicio.
+    Sempre faz:
+      - ACHATA lineItems.edges -> list[node]
+      - extrai CPF
+      - normaliza endereço (inclui bairro/logradouro oficiais via CEP)
+    Opcional:
+      - ajuste com IA (se usar_gpt=True e houver provider configurado no normalizador)
     """
-    # Monta a search string do jeito já padronizado no projeto (dd/MM/yyyy)
+    # 1) Filtros da busca
     search = _parametros_coleta_shopify(data_inicio, status)
 
-    # Busca UMA página (até `limit` itens). Shopify limita 50 por página.
-    pedidos, next_cursor = _pagina_vendas_shopify(
-        search_str=search,
-        cursor=cursor,
-        first=max(1, min(limit, 50)),
-    )
+    pedidos_norm: list[ShopifyPedido] = []
 
-    # Apenas log útil; não transformar dados.
+    # 2) Itera TODAS as páginas da Shopify
+    for node in _paginacao_vendas_shopify(search):
+        # --- 2.1 Achatar line items ---
+        li_edges = (node.get("lineItems") or {}).get("edges") or []
+        line_items: list[dict[str, Any]] = []
+        for lie in li_edges:
+            inode = (lie or {}).get("node") or {}
+            line_items.append(
+                {
+                    "id": inode.get("id"),
+                    "title": inode.get("title"),
+                    "quantity": inode.get("quantity"),
+                    "sku": inode.get("sku"),
+                    "product": (inode.get("product") or {}),
+                    "discountedTotalSet": (inode.get("discountedTotalSet") or {}),
+                }
+            )
+
+        # --- 2.2 Extrair CPF ---
+        cpf = _extrair_cpf_do_node(node)
+
+        # --- 2.3 Normalizar endereço SEMPRE (usa CEP internamente) ---
+        addr_in = node.get("shippingAddress") or {}
+        order_id = str(node.get("id") or node.get("name") or "")
+        address1 = str(addr_in.get("address1") or "")
+        address2 = str(addr_in.get("address2") or "")
+        cep = str(addr_in.get("zip") or "") or None
+
+        # provider de IA (se você tiver um, injete no normalizador; caso contrário fica None)
+        ai_provider = None
+        if usar_gpt:
+            ai_provider = None  # substitua aqui pelo seu provider quando disponível
+
+        try:
+            norm = normalizar_endereco_unico(
+                order_id=order_id,
+                address1=address1,
+                address2=address2,
+                cep=cep,
+                ai_provider=ai_provider,
+            )
+        except Exception:
+            # fallback: mantém originais
+            norm = {
+                "endereco_base": address1,
+                "numero": None,
+                "complemento": address2,
+                "logradouro_oficial": None,
+                "bairro_oficial": None,
+                "precisa_contato": None,
+            }
+
+        shipping_address_out: dict[str, Any] = dict(addr_in or {})
+        # aplica mínimos obrigatórios
+        shipping_address_out["address1"] = norm.get("endereco_base") or address1
+        shipping_address_out["address2"] = norm.get("complemento") or address2
+        if norm.get("numero") is not None:
+            shipping_address_out["numero"] = norm.get("numero")
+        if norm.get("bairro_oficial"):
+            shipping_address_out["bairro_oficial"] = norm["bairro_oficial"]
+        if norm.get("logradouro_oficial"):
+            shipping_address_out["logradouro_oficial"] = norm["logradouro_oficial"]
+        if "precisa_contato" in norm:
+            shipping_address_out["precisa_contato"] = norm.get("precisa_contato")
+
+        pedido: dict[str, Any] = {
+            "id": node.get("id"),
+            "name": node.get("name"),
+            "createdAt": node.get("createdAt"),
+            "displayFulfillmentStatus": node.get("displayFulfillmentStatus"),
+            "currentTotalDiscountsSet": (node.get("currentTotalDiscountsSet") or {}),
+            "customer": (node.get("customer") or {}),
+            "shippingAddress": shipping_address_out,
+            "shippingLine": (node.get("shippingLine") or {}),
+            "lineItems": line_items,
+            "cpf": cpf,
+        }
+
+        pedidos_norm.append(cast(ShopifyPedido, pedido))
+
     logger.info(
         "listar_pedidos_shopify_ok",
-        extra={"items": len(pedidos), "next_cursor": bool(next_cursor), "status": status},
+        extra={
+            "items": len(pedidos_norm),
+            "status": status,
+            "usar_gpt": usar_gpt,
+            "paginacao": "all_pages",
+        },
     )
-    return pedidos, next_cursor
+    return pedidos_norm, None

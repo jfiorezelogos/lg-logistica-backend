@@ -11,13 +11,13 @@ from app.services.shopify_ajuste_endereco import (
     parse_enderecos,
 )
 from app.services.shopify_client import _coletar_remaining_lineitems
-from app.utils.utils_helpers import _normalizar_order_id
+from app.utils.utils_helpers import normalizar_order_id
 
 
 def enriquecer_cpfs_nas_linhas(linhas: list[dict[str, str]], mapa_cpfs: dict[str, str]) -> None:
     for l in linhas:
         if not l.get("CPF/CNPJ Comprador"):
-            tid = _normalizar_order_id(l.get("transaction_id", ""))
+            tid = normalizar_order_id(l.get("transaction_id", ""))
             if tid and tid in mapa_cpfs:
                 l["CPF/CNPJ Comprador"] = mapa_cpfs[tid]
 

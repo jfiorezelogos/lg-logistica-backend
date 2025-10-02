@@ -10,8 +10,8 @@ from brazilcep import exceptions as br_ex, get_address_from_cep
 
 from app.schemas.shopify_vendas_produtos import ShopifyEnderecoResultado
 from app.utils.utils_helpers import (
-    _normalizar_order_id,
     logger,  # mantido se outros módulos usarem; ok permanecer importado
+    normalizar_order_id,
 )
 
 # =============================================================================
@@ -258,7 +258,7 @@ def normalizar_endereco_unico(
     Usa CEP para preferir logradouro/bairro oficiais e aplicar exceção Brasília/DF.
     Retorna um ShopifyEnderecoResultado com campos prontos para o front/integrações.
     """
-    pedido_id = _normalizar_order_id(order_id)
+    pedido_id = normalizar_order_id(order_id)
 
     # 1) CEP → logradouro/bairro/cidade/UF (para regra Brasília/DF e logradouro preferencial)
     logradouro_cep = ""

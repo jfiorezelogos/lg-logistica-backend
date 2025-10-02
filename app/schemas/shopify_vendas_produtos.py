@@ -2,17 +2,11 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-
-# ---------- Query params ----------
-class ShopifyPedidosQuery(BaseModel):
-    status: str = Field(default="any", pattern="^(any|unfulfilled)$")
-    data_inicio: str = Field(..., description="YYYY-MM-DD (filtra created_at >= data_inicio)")
-    cursor: str | None = Field(default=None, description="Cursor de paginação da Shopify")
-    limit: int = Field(default=50, ge=1, le=50, description="Máximo por página")
-    normalize_endereco: bool = Field(default=False, description="Enriquecer endereço usando serviços de ajuste")
+# ============================
+# Modelos básicos (mantidos)
+# ============================
 
 
-# ---------- Modelos básicos ----------
 class Money(BaseModel):
     amount: float | None = None
 
@@ -55,7 +49,6 @@ class LineItem(BaseModel):
     discountedTotalSet: DiscountSet | None = None
 
 
-# ---------- Pedido (nó principal) ----------
 class ShopifyPedido(BaseModel):
     id: str
     name: str | None = None
@@ -69,7 +62,78 @@ class ShopifyPedido(BaseModel):
     cpf: str | None = None  # extraído de localizationExtensions, quando houver
 
 
-# ---------- Resposta paginada ----------
-class PedidosResponse(BaseModel):
-    items: list[ShopifyPedido]
-    next_cursor: str | None = None
+# ===================================================
+# Planilha (JSON) — estrutura padronizada p/ o Bling
+# ===================================================
+
+
+class LinhaPlanilhaBling(BaseModel):
+    numero_pedido: str = Field(alias="Número pedido")
+    nome_comprador: str = Field(alias="Nome Comprador")
+    data_pedido: str = Field(alias="Data Pedido")
+    data: str = Field(alias="Data")
+    cpf_cnpj_comprador: str = Field(alias="CPF/CNPJ Comprador")
+    endereco_comprador: str = Field(alias="Endereço Comprador")
+    bairro_comprador: str | None = Field(default="", alias="Bairro Comprador")
+    numero_comprador: str | None = Field(default="", alias="Número Comprador")
+    complemento_comprador: str | None = Field(default="", alias="Complemento Comprador")
+    cep_comprador: str = Field(alias="CEP Comprador")
+    cidade_comprador: str = Field(alias="Cidade Comprador")
+    uf_comprador: str = Field(alias="UF Comprador")
+    telefone_comprador: str | None = Field(default="", alias="Telefone Comprador")
+    celular_comprador: str | None = Field(default="", alias="Celular Comprador")
+    email_comprador: str | None = Field(default="", alias="E-mail Comprador")
+
+    produto: str = Field(alias="Produto")
+    sku: str = Field(alias="SKU")
+    un: str = Field(alias="Un")
+    quantidade: str = Field(alias="Quantidade")
+    valor_unitario: str = Field(alias="Valor Unitário")
+    valor_total: str = Field(alias="Valor Total")
+    total_pedido: str | None = Field(default="", alias="Total Pedido")
+    valor_frete_pedido: str = Field(alias="Valor Frete Pedido")
+    valor_desconto_pedido: str = Field(alias="Valor Desconto Pedido")
+    outras_despesas: str | None = Field(default="", alias="Outras despesas")
+
+    nome_entrega: str = Field(alias="Nome Entrega")
+    endereco_entrega: str = Field(alias="Endereço Entrega")
+    numero_entrega: str | None = Field(default="", alias="Número Entrega")
+    complemento_entrega: str | None = Field(default="", alias="Complemento Entrega")
+    cidade_entrega: str = Field(alias="Cidade Entrega")
+    uf_entrega: str = Field(alias="UF Entrega")
+    cep_entrega: str = Field(alias="CEP Entrega")
+    bairro_entrega: str | None = Field(default="", alias="Bairro Entrega")
+
+    transportadora: str | None = Field(default="", alias="Transportadora")
+    servico: str | None = Field(default="", alias="Serviço")
+    tipo_frete: str = Field(alias="Tipo Frete")
+    observacoes: str | None = Field(default="", alias="Observações")
+    qtd_parcela: str | None = Field(default="", alias="Qtd Parcela")
+    data_prevista: str | None = Field(default="", alias="Data Prevista")
+    vendedor: str | None = Field(default="", alias="Vendedor")
+    forma_pagamento: str | None = Field(default="", alias="Forma Pagamento")
+    id_forma_pagamento: str | None = Field(default="", alias="ID Forma Pagamento")
+
+    transaction_id: str = Field(alias="transaction_id")
+    id_line_item: str = Field(alias="id_line_item")
+    id_produto: str = Field(alias="id_produto")
+    indisponivel: str = Field(alias="indisponivel")
+    precisa_contato: str = Field(alias="Precisa Contato")
+    status_fulfillment: str = Field(alias="status_fulfillment")
+
+    model_config = {
+        "populate_by_name": True,
+        "strict": False,
+        "ignored_types": (),
+    }
+
+
+class PlanilhaFiltros(BaseModel):
+    status: str
+    data_inicio: str  # ISO (YYYY-MM-DD) recebido na rota
+
+
+class PlanilhaBlingResponse(BaseModel):
+    linhas: list[LinhaPlanilhaBling]
+    stats: dict[str, Any]
+    filtros: PlanilhaFiltros

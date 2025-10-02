@@ -26,7 +26,7 @@ def limpar(v: Any) -> str:
     return "" if pd.isna(v) else str(v).strip()
 
 
-def _normalizar_order_id(valor: str | int) -> str:
+def normalizar_order_id(valor: str | int) -> str:
     if isinstance(valor, int):
         return str(valor)
     s = str(valor).strip()

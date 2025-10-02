@@ -10,7 +10,7 @@ from app.services.guru_vendas_produtos import iniciar_coleta_vendas_produtos
 from app.services.guru_worker_coleta import executar_worker_guru
 from app.services.loader_produtos_info import load_skus_info
 
-router = APIRouter(prefix="/guru/pedidos", tags=["Coleta"])
+router = APIRouter(prefix="/guru/pedidos", tags=["Coletas"])
 
 # --- cache exclusivo desta rota (guarda só o último snapshot) ---
 _CACHE_PRODUTOS: dict[str, tuple[list[dict[str, Any]], dict[str, dict[str, int]]]] = {}
